@@ -120,10 +120,15 @@ function cacheDOM() {
         // Account
         accountSection: document.getElementById('account-section'),
         loggedInSection: document.getElementById('logged-in-section'),
-        accountNickname: document.getElementById('account-nickname'),
+        accountCreateView: document.getElementById('account-create-view'),
+        accountLoginView: document.getElementById('account-login-view'),
+        accountNicknameCreate: document.getElementById('account-nickname-create'),
+        accountNicknameLogin: document.getElementById('account-nickname-login'),
         accountCode: document.getElementById('account-code'),
         btnAccountLogin: document.getElementById('btn-account-login'),
         btnAccountCreate: document.getElementById('btn-account-create'),
+        btnShowLogin: document.getElementById('btn-show-login'),
+        btnShowCreate: document.getElementById('btn-show-create'),
         btnAccountLogout: document.getElementById('btn-account-logout'),
         menuAccountName: document.getElementById('menu-account-name'),
         menuAccountElo: document.getElementById('menu-account-elo'),
@@ -240,6 +245,8 @@ function setupEventListeners() {
     DOM.btnAccountLogin?.addEventListener('click', loginAccount);
     DOM.btnAccountCreate?.addEventListener('click', createAccount);
     DOM.btnAccountLogout?.addEventListener('click', logoutAccount);
+    DOM.btnShowLogin?.addEventListener('click', showLoginView);
+    DOM.btnShowCreate?.addEventListener('click', showCreateView);
     
     // Ranked queue
     DOM.btnRankedQueue?.addEventListener('click', joinRankedQueue);
@@ -346,6 +353,22 @@ function hideForm(type) {
 /**
  * Load saved account from localStorage
  */
+/**
+ * Show the login view and hide the create account view
+ */
+function showLoginView() {
+    DOM.accountCreateView?.classList.add('hidden');
+    DOM.accountLoginView?.classList.remove('hidden');
+}
+
+/**
+ * Show the create account view and hide the login view
+ */
+function showCreateView() {
+    DOM.accountLoginView?.classList.add('hidden');
+    DOM.accountCreateView?.classList.remove('hidden');
+}
+
 function loadSavedAccount() {
     const saved = localStorage.getItem('pokefodase_account');
     if (saved) {
@@ -387,7 +410,7 @@ function updateAccountUI() {
  * Create a new account
  */
 async function createAccount() {
-    const nickname = DOM.accountNickname?.value?.trim();
+    const nickname = DOM.accountNicknameCreate?.value?.trim();
     if (!nickname || nickname.length < 2) {
         showToast('Nickname deve ter pelo menos 2 caracteres', 'warning');
         return;
@@ -414,7 +437,7 @@ async function createAccount() {
  * Login to an existing account
  */
 async function loginAccount() {
-    const nickname = DOM.accountNickname?.value?.trim();
+    const nickname = DOM.accountNicknameLogin?.value?.trim();
     const code = DOM.accountCode?.value?.trim();
     
     if (!nickname) {

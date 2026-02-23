@@ -16,20 +16,34 @@
                 
                 <!-- Account Section (shown when not logged in) -->
                 <div id="account-section" class="account-section">
-                    <div id="account-login-form" class="form-container">
-                        <h2>🔑 Login / Criar Conta</h2>
+                    <!-- Create Account View (shown by default) -->
+                    <div id="account-create-view" class="form-container">
+                        <h2>🎮 Criar Conta</h2>
                         <div class="form-group">
-                            <label for="account-nickname">Nickname</label>
-                            <input type="text" id="account-nickname" maxlength="50" placeholder="Seu nickname">
+                            <label for="account-nickname-create">Escolha um Nickname</label>
+                            <input type="text" id="account-nickname-create" maxlength="50" placeholder="Seu nickname">
+                        </div>
+                        <div class="form-actions">
+                            <button id="btn-account-create" class="btn btn-primary">Criar Conta</button>
+                        </div>
+                        <p class="account-toggle-text">Já tem uma conta? <button id="btn-show-login" class="btn-link">Entrar</button></p>
+                    </div>
+
+                    <!-- Login View (hidden by default) -->
+                    <div id="account-login-view" class="form-container hidden">
+                        <h2>🔑 Entrar na Conta</h2>
+                        <div class="form-group">
+                            <label for="account-nickname-login">Nickname</label>
+                            <input type="text" id="account-nickname-login" maxlength="50" placeholder="Seu nickname">
                         </div>
                         <div class="form-group">
-                            <label for="account-code">Código (8 dígitos) - deixe vazio para criar conta</label>
+                            <label for="account-code">Código (8 dígitos)</label>
                             <input type="text" id="account-code" maxlength="8" placeholder="12345678">
                         </div>
                         <div class="form-actions">
                             <button id="btn-account-login" class="btn btn-primary">Entrar</button>
-                            <button id="btn-account-create" class="btn btn-secondary">Criar Conta</button>
                         </div>
+                        <p class="account-toggle-text">Não tem conta? <button id="btn-show-create" class="btn-link">Criar Conta</button></p>
                     </div>
                 </div>
                 

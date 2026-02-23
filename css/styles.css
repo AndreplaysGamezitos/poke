@@ -696,6 +696,29 @@ body {
     display: block;
 }
 
+.account-toggle-text {
+    text-align: center;
+    margin-top: var(--spacing-md);
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.6);
+}
+
+.btn-link {
+    background: none;
+    border: none;
+    color: var(--primary-yellow);
+    font-weight: bold;
+    cursor: pointer;
+    text-decoration: underline;
+    font-size: 0.9rem;
+    padding: 0;
+    transition: color 0.2s;
+}
+
+.btn-link:hover {
+    color: var(--accent);
+}
+
 .logged-in-section {
     width: 100%;
     max-width: 400px;
