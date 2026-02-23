@@ -50,32 +50,32 @@ function joinQueue() {
         jsonResponse(['error' => 'Must be logged in to play ranked'], 401);
     }
 
-    // Check if already in queue
+    // Check if already in queue - if so, treat as a rejoin
     $stmt = $db->prepare("
         SELECT id FROM ranked_queue 
         WHERE account_id = ? AND status = 'waiting'
     ");
     $stmt->execute([$accountId]);
-    if ($stmt->fetch()) {
-        jsonResponse(['error' => 'Already in queue'], 400);
-    }
+    $existingEntry = $stmt->fetch();
 
-    // Check if already in an active game
-    $stmt = $db->prepare("
-        SELECT p.id FROM players p
-        JOIN rooms r ON p.room_id = r.id
-        WHERE p.account_id = ? AND r.game_state NOT IN ('finished', 'lobby')
-    ");
-    $stmt->execute([$accountId]);
-    if ($stmt->fetch()) {
-        jsonResponse(['error' => 'Already in an active game'], 400);
-    }
+    if (!$existingEntry) {
+        // Check if already in an active game
+        $stmt = $db->prepare("
+            SELECT p.id FROM players p
+            JOIN rooms r ON p.room_id = r.id
+            WHERE p.account_id = ? AND r.game_state NOT IN ('finished', 'lobby')
+        ");
+        $stmt->execute([$accountId]);
+        if ($stmt->fetch()) {
+            jsonResponse(['error' => 'Already in an active game'], 400);
+        }
 
-    // Add to queue
-    $stmt = $db->prepare("
-        INSERT INTO ranked_queue (account_id, status) VALUES (?, 'waiting')
-    ");
-    $stmt->execute([$accountId]);
+        // Add to queue
+        $stmt = $db->prepare("
+            INSERT INTO ranked_queue (account_id, status) VALUES (?, 'waiting')
+        ");
+        $stmt->execute([$accountId]);
+    }
 
     // Check if we have enough players waiting
     $stmt = $db->prepare("
