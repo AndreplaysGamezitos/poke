@@ -77,8 +77,8 @@ const WS_CONFIG = {
     // Change this URL to your Node.js WebSocket server URL in production
     // For local development: 'ws://localhost:3000'
     // For production: 'wss://your-domain.com:3000' or via reverse proxy
-    url: 'ws://localhost:3000',
-    enabled: false,  // Disabled - using SSE mode (works on shared hosting)
+    url: 'wss://poke.labzts.fun/ws',
+    enabled: true,       // ← CHANGE from false to true
     reconnectDelay: 3000,
     maxReconnectAttempts: 10
 };
