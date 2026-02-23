@@ -16,8 +16,8 @@ ini_set('log_errors', 1);
 
 // Database Configuration
 define('DB_HOST', 'localhost');
-define('DB_NAME', 'u141652417_pokeweb');
-define('DB_USER', 'u141652417_pokewebuser');
+define('DB_NAME', 'pokefodase');
+define('DB_USER', 'pokefodase_user');
 define('DB_PASS', 'Andre159**');
 
 // ===========================================
