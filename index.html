@@ -23,6 +23,12 @@
                             <label for="account-nickname-create">Escolha um Nickname</label>
                             <input type="text" id="account-nickname-create" maxlength="50" placeholder="Seu nickname">
                         </div>
+                        <div class="form-group">
+                            <label>Escolha seu Avatar</label>
+                            <div class="avatar-selector" id="account-avatar-selector">
+                                <!-- Avatars will be added by JS -->
+                            </div>
+                        </div>
                         <div class="form-actions">
                             <button id="btn-account-create" class="btn btn-primary">Criar Conta</button>
                         </div>
@@ -50,10 +56,15 @@
                 <!-- Logged In Section (shown when logged in) -->
                 <div id="logged-in-section" class="logged-in-section hidden">
                     <div class="account-info-bar">
+                        <span class="account-avatar" id="menu-account-avatar">🙂</span>
                         <span class="account-nickname" id="menu-account-name">---</span>
                         <span class="account-elo" id="menu-account-elo">ELO: 0</span>
-                        <span class="account-gold" id="menu-account-gold">🪙 0</span>
                         <button id="btn-account-logout" class="btn btn-text btn-small">Sair</button>
+                    </div>
+                    <div class="account-code-reveal" id="account-code-reveal">
+                        <span class="code-label">Seu Código:</span>
+                        <span class="code-hidden" id="code-display" title="Clique para revelar">••••••••</span>
+                        <button id="btn-toggle-code" class="btn btn-text btn-small">👁️</button>
                     </div>
                     
                     <div class="menu-buttons">
@@ -70,7 +81,7 @@
                         <h2>⚔️ Fila Ranqueada</h2>
                         <div class="queue-spinner"></div>
                         <p id="ranked-queue-status">Procurando partida...</p>
-                        <p id="ranked-queue-count">0/8 jogadores</p>
+                        <p id="ranked-queue-count">0/4 jogadores</p>
                         <button id="btn-leave-queue" class="btn btn-danger">Cancelar</button>
                     </div>
                 </div>
@@ -89,16 +100,7 @@
                 <!-- Create Room Form -->
                 <div id="create-room-form" class="form-container hidden">
                     <h2>Criar Nova Sala</h2>
-                    <div class="form-group">
-                        <label for="create-player-name">Seu Nome</label>
-                        <input type="text" id="create-player-name" maxlength="20" placeholder="Digite seu nome">
-                    </div>
-                    <div class="form-group">
-                        <label>Selecionar Avatar</label>
-                        <div class="avatar-selector" id="create-avatar-selector">
-                            <!-- Avatars will be added by JS -->
-                        </div>
-                    </div>
+                    <p class="form-hint">Você entrará como <strong id="create-room-preview-name">---</strong></p>
                     <div class="form-actions">
                         <button id="btn-confirm-create" class="btn btn-primary">Criar Sala</button>
                         <button id="btn-cancel-create" class="btn btn-text">Cancelar</button>
@@ -111,16 +113,6 @@
                     <div class="form-group">
                         <label for="room-code-input">Código da Sala</label>
                         <input type="text" id="room-code-input" maxlength="6" placeholder="Digite o código da sala" style="text-transform: uppercase;">
-                    </div>
-                    <div class="form-group">
-                        <label for="join-player-name">Seu Nome</label>
-                        <input type="text" id="join-player-name" maxlength="20" placeholder="Digite seu nome">
-                    </div>
-                    <div class="form-group">
-                        <label>Selecionar Avatar</label>
-                        <div class="avatar-selector" id="join-avatar-selector">
-                            <!-- Avatars will be added by JS -->
-                        </div>
                     </div>
                     <div class="form-actions">
                         <button id="btn-confirm-join" class="btn btn-primary">Entrar na Sala</button>

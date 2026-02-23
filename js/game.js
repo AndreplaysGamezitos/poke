@@ -20,7 +20,7 @@ const GameState = {
     wsReconnectAttempts: 0,
     lastEventId: 0,
     // Account state
-    account: null, // { id, nickname, code, elo, gold, games_played, games_won }
+    account: null, // { id, nickname, code, avatar_id, elo, games_played, games_won }
     // Ranked queue
     rankedQueueInterval: null,
     // Catching phase state
@@ -132,7 +132,10 @@ function cacheDOM() {
         btnAccountLogout: document.getElementById('btn-account-logout'),
         menuAccountName: document.getElementById('menu-account-name'),
         menuAccountElo: document.getElementById('menu-account-elo'),
-        menuAccountGold: document.getElementById('menu-account-gold'),
+        menuAccountAvatar: document.getElementById('menu-account-avatar'),
+        codeDisplay: document.getElementById('code-display'),
+        btnToggleCode: document.getElementById('btn-toggle-code'),
+        accountAvatarSelector: document.getElementById('account-avatar-selector'),
         // Ranked
         btnRankedQueue: document.getElementById('btn-ranked-queue'),
         rankedQueuePanel: document.getElementById('ranked-queue-panel'),
@@ -149,15 +152,12 @@ function cacheDOM() {
         btnJoinRoom: document.getElementById('btn-join-room'),
         createRoomForm: document.getElementById('create-room-form'),
         joinRoomForm: document.getElementById('join-room-form'),
-        createPlayerName: document.getElementById('create-player-name'),
-        joinPlayerName: document.getElementById('join-player-name'),
+        createRoomPreviewName: document.getElementById('create-room-preview-name'),
         roomCodeInput: document.getElementById('room-code-input'),
         btnConfirmCreate: document.getElementById('btn-confirm-create'),
         btnCancelCreate: document.getElementById('btn-cancel-create'),
         btnConfirmJoin: document.getElementById('btn-confirm-join'),
         btnCancelJoin: document.getElementById('btn-cancel-join'),
-        createAvatarSelector: document.getElementById('create-avatar-selector'),
-        joinAvatarSelector: document.getElementById('join-avatar-selector'),
         // Lobby
         displayRoomCode: document.getElementById('display-room-code'),
         btnCopyCode: document.getElementById('btn-copy-code'),
@@ -248,6 +248,10 @@ function setupEventListeners() {
     DOM.btnShowLogin?.addEventListener('click', showLoginView);
     DOM.btnShowCreate?.addEventListener('click', showCreateView);
     
+    // Code reveal toggle
+    DOM.btnToggleCode?.addEventListener('click', toggleCodeReveal);
+    DOM.codeDisplay?.addEventListener('click', toggleCodeReveal);
+    
     // Ranked queue
     DOM.btnRankedQueue?.addEventListener('click', joinRankedQueue);
     DOM.btnLeaveQueue?.addEventListener('click', leaveRankedQueue);
@@ -283,30 +287,24 @@ function setupEventListeners() {
     document.addEventListener('keydown', handleCatchingKeyboard);
     
     // Enter key for forms
-    DOM.createPlayerName.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') createRoom();
-    });
-    DOM.joinPlayerName.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') joinRoom();
-    });
     DOM.roomCodeInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') joinRoom();
     });
 }
 
 /**
- * Setup avatar selector options
+ * Setup avatar selector options (account creation only)
  */
 function setupAvatarSelectors() {
-    [DOM.createAvatarSelector, DOM.joinAvatarSelector].forEach(selector => {
-        AVATARS.forEach((avatar, index) => {
-            const option = document.createElement('div');
-            option.className = 'avatar-option' + (index === 0 ? ' selected' : '');
-            option.textContent = avatar;
-            option.dataset.avatarId = index + 1;
-            option.addEventListener('click', () => selectAvatar(option, selector));
-            selector.appendChild(option);
-        });
+    const selector = DOM.accountAvatarSelector;
+    if (!selector) return;
+    AVATARS.forEach((avatar, index) => {
+        const option = document.createElement('div');
+        option.className = 'avatar-option' + (index === 0 ? ' selected' : '');
+        option.textContent = avatar;
+        option.dataset.avatarId = index + 1;
+        option.addEventListener('click', () => selectAvatar(option, selector));
+        selector.appendChild(option);
     });
 }
 
@@ -328,7 +326,11 @@ function showForm(type) {
     
     if (type === 'create') {
         DOM.createRoomForm.classList.remove('hidden');
-        DOM.createPlayerName.focus();
+        // Show account name preview
+        if (DOM.createRoomPreviewName && GameState.account) {
+            const avatarIndex = (GameState.account.avatar_id || 1) - 1;
+            DOM.createRoomPreviewName.textContent = `${AVATARS[avatarIndex] || AVATARS[0]} ${GameState.account.nickname}`;
+        }
     } else {
         DOM.joinRoomForm.classList.remove('hidden');
         DOM.roomCodeInput.focus();
@@ -399,10 +401,35 @@ function updateAccountUI() {
         DOM.loggedInSection?.classList.remove('hidden');
         if (DOM.menuAccountName) DOM.menuAccountName.textContent = GameState.account.nickname;
         if (DOM.menuAccountElo) DOM.menuAccountElo.textContent = `ELO: ${GameState.account.elo}`;
-        if (DOM.menuAccountGold) DOM.menuAccountGold.textContent = `🪙 ${GameState.account.gold}`;
+        if (DOM.menuAccountAvatar) {
+            const avatarIndex = (GameState.account.avatar_id || 1) - 1;
+            DOM.menuAccountAvatar.textContent = AVATARS[avatarIndex] || AVATARS[0];
+        }
+        // Reset code display to hidden state
+        if (DOM.codeDisplay) {
+            DOM.codeDisplay.textContent = '••••••••';
+            DOM.codeDisplay.dataset.revealed = 'false';
+        }
     } else {
         DOM.accountSection?.classList.remove('hidden');
         DOM.loggedInSection?.classList.add('hidden');
+    }
+}
+
+/**
+ * Toggle the visibility of the player's account code
+ */
+function toggleCodeReveal() {
+    if (!DOM.codeDisplay || !GameState.account) return;
+    const isRevealed = DOM.codeDisplay.dataset.revealed === 'true';
+    if (isRevealed) {
+        DOM.codeDisplay.textContent = '••••••••';
+        DOM.codeDisplay.dataset.revealed = 'false';
+        DOM.codeDisplay.classList.remove('revealed');
+    } else {
+        DOM.codeDisplay.textContent = GameState.account.code;
+        DOM.codeDisplay.dataset.revealed = 'true';
+        DOM.codeDisplay.classList.add('revealed');
     }
 }
 
@@ -418,7 +445,10 @@ async function createAccount() {
     
     setLoading(true);
     try {
-        const result = await apiCall(`${API.account}?action=create`, { nickname });
+        const result = await apiCall(`${API.account}?action=create`, { 
+            nickname,
+            avatar_id: GameState.selectedAvatar 
+        });
         if (result.success) {
             saveAccount(result.account);
             showToast(`Conta criada! Seu código: ${result.account.code}. Salve!`, 'success', 8000);
@@ -507,7 +537,7 @@ async function joinRankedQueue() {
             // Show queue panel
             DOM.rankedQueuePanel?.classList.remove('hidden');
             if (DOM.rankedQueueStatus) DOM.rankedQueueStatus.textContent = result.message;
-            if (DOM.rankedQueueCount) DOM.rankedQueueCount.textContent = `${8 - result.players_needed}/8 jogadores`;
+            if (DOM.rankedQueueCount) DOM.rankedQueueCount.textContent = `${4 - result.players_needed}/4 jogadores`;
             
             // Start polling for queue status
             startQueuePolling();
@@ -560,7 +590,7 @@ function startQueuePolling() {
                     DOM.rankedQueuePanel?.classList.add('hidden');
                 } else {
                     if (DOM.rankedQueueCount) {
-                        DOM.rankedQueueCount.textContent = `${8 - (result.players_needed || 0)}/8 jogadores`;
+                        DOM.rankedQueueCount.textContent = `${4 - (result.players_needed || 0)}/4 jogadores`;
                     }
                 }
             }
@@ -845,14 +875,15 @@ async function apiCall(endpoint, data = {}, method = 'POST', timeoutMs = 15000) 
  * Create a new room
  */
 async function createRoom() {
-    const playerName = DOM.createPlayerName.value.trim() || 'Player 1';
+    const playerName = GameState.account?.nickname || 'Player 1';
+    const avatarId = GameState.account?.avatar_id || 1;
     
     setLoading(true);
     try {
         const result = await apiCall(API.room, {
             action: 'create',
             player_name: playerName,
-            avatar_id: GameState.selectedAvatar
+            avatar_id: avatarId
         });
         
         if (result.success) {
@@ -878,7 +909,8 @@ async function createRoom() {
  */
 async function joinRoom() {
     const roomCode = DOM.roomCodeInput.value.trim().toUpperCase();
-    const playerName = DOM.joinPlayerName.value.trim() || 'Player';
+    const playerName = GameState.account?.nickname || 'Player';
+    const avatarId = GameState.account?.avatar_id || 1;
     
     if (!roomCode || roomCode.length !== 6) {
         showToast('Digite um código de sala válido com 6 caracteres', 'warning');
@@ -892,7 +924,7 @@ async function joinRoom() {
             action: 'join',
             room_code: roomCode,
             player_name: playerName,
-            avatar_id: GameState.selectedAvatar
+            avatar_id: avatarId
         });
         
         console.log('Join result:', result);

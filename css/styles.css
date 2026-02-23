@@ -733,8 +733,12 @@ body {
     padding: var(--spacing-sm) var(--spacing-md);
     background: rgba(255,255,255,0.05);
     border-radius: var(--border-radius);
-    margin-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-sm);
     flex-wrap: wrap;
+}
+
+.account-info-bar .account-avatar {
+    font-size: 1.6rem;
 }
 
 .account-info-bar .account-nickname {
@@ -748,8 +752,49 @@ body {
     font-weight: 600;
 }
 
-.account-info-bar .account-gold {
-    color: var(--warning);
+/* Code Reveal */
+.account-code-reveal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-xs) var(--spacing-md);
+    background: rgba(255,255,255,0.03);
+    border-radius: var(--border-radius);
+    margin-bottom: var(--spacing-lg);
+    font-size: 0.85rem;
+}
+
+.account-code-reveal .code-label {
+    color: var(--text-secondary);
+}
+
+.account-code-reveal .code-hidden {
+    font-family: 'Courier New', monospace;
+    color: var(--text-secondary);
+    letter-spacing: 2px;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    transition: all 0.2s;
+    user-select: none;
+}
+
+.account-code-reveal .code-hidden:hover {
+    background: rgba(255,255,255,0.08);
+}
+
+.account-code-reveal .code-hidden.revealed {
+    color: var(--primary-yellow);
+    background: rgba(255,255,255,0.08);
+    user-select: text;
+}
+
+/* Create Room Preview */
+.form-hint {
+    color: var(--text-secondary);
+    font-size: 0.95rem;
+    margin-bottom: var(--spacing-md);
 }
 
 /* Ranked Queue Button */

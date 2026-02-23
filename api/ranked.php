@@ -1,7 +1,7 @@
 <?php
 /**
  * PokeFodase v2.0 - Ranked Queue API
- * Handles ranked matchmaking queue (8-player solo queue only)
+ * Handles ranked matchmaking queue (4-player solo queue)
  */
 
 require_once __DIR__ . '/../config.php';
@@ -77,20 +77,20 @@ function joinQueue() {
     ");
     $stmt->execute([$accountId]);
 
-    // Check if we have 8 players waiting
+    // Check if we have enough players waiting
     $stmt = $db->prepare("
         SELECT rq.id, rq.account_id, a.nickname
         FROM ranked_queue rq
         JOIN accounts a ON rq.account_id = a.id
         WHERE rq.status = 'waiting'
         ORDER BY rq.queued_at ASC
-        LIMIT 8
+        LIMIT " . RANKED_PLAYERS . "
     ");
     $stmt->execute();
     $waitingPlayers = $stmt->fetchAll();
 
     if (count($waitingPlayers) >= RANKED_PLAYERS) {
-        // We have 8 players! Create ranked game
+        // We have enough players! Create ranked game
         $result = createRankedGame($db, $waitingPlayers);
         jsonResponse([
             'success' => true,
@@ -206,7 +206,7 @@ function checkQueue() {
 }
 
 /**
- * Create a ranked game room with 8 matched players
+ * Create a ranked game room with matched players
  */
 function createRankedGame($db, $players) {
     // Generate room code

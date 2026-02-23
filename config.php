@@ -27,7 +27,7 @@ define('DB_PASS', 'Andre159**');
 // Player limits
 define('MAX_PLAYERS', 8);
 define('MIN_PLAYERS', 2);
-define('RANKED_PLAYERS', 8); // Ranked mode requires exactly 8
+define('RANKED_PLAYERS', 4); // Ranked mode requires 4 for easier testing
 define('MAX_TEAM_SIZE', 6);
 
 // Route / Game structure
@@ -73,30 +73,21 @@ define('FULL_TEAM_CATCH_REWARD', 2);
 define('ELO_STARTING', 0);
 define('ELO_K_FACTOR', 32);
 
-// ELO changes by placement in 8-player game:
-// 1st: +25, 2nd: +15, 3rd: +8, 4th: +3
-// 5th: -3, 6th: -8, 7th: -15, 8th: -25
+// ELO changes by placement in 4-player game:
+// 1st: +25, 2nd: +10, 3rd: -10, 4th: -25
 define('ELO_PLACEMENT_CHANGES', json_encode([
     1 => 25,
-    2 => 15,
-    3 => 8,
-    4 => 3,
-    5 => -3,
-    6 => -8,
-    7 => -15,
-    8 => -25
+    2 => 10,
+    3 => -10,
+    4 => -25
 ]));
 
-// Gold earned by placement (top 4 earn gold, bottom 4 earn nothing)
+// Gold earned by placement (top 2 earn gold)
 define('GOLD_PLACEMENT_REWARDS', json_encode([
     1 => 10,
-    2 => 6,
-    3 => 4,
-    4 => 2,
-    5 => 0,
-    6 => 0,
-    7 => 0,
-    8 => 0
+    2 => 4,
+    3 => 0,
+    4 => 0
 ]));
 
 // SSE Configuration

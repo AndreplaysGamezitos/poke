@@ -53,6 +53,9 @@ function createAccount() {
         jsonResponse(['error' => 'Nickname must be 2-50 characters'], 400);
     }
 
+    $avatarId = intval($_POST['avatar_id'] ?? 1);
+    if ($avatarId < 1 || $avatarId > 10) $avatarId = 1;
+
     // Generate unique 8-digit code
     $attempts = 0;
     do {
@@ -67,10 +70,10 @@ function createAccount() {
     }
 
     $stmt = $db->prepare("
-        INSERT INTO accounts (nickname, account_code, elo, games_played, games_won, gold)
-        VALUES (?, ?, ?, 0, 0, 0)
+        INSERT INTO accounts (nickname, account_code, avatar_id, elo, games_played, games_won, gold)
+        VALUES (?, ?, ?, ?, 0, 0, 0)
     ");
-    $stmt->execute([$nickname, $code, ELO_STARTING]);
+    $stmt->execute([$nickname, $code, $avatarId, ELO_STARTING]);
     $accountId = $db->lastInsertId();
 
     // Store in session
@@ -84,6 +87,7 @@ function createAccount() {
             'id' => $accountId,
             'nickname' => $nickname,
             'code' => $code,
+            'avatar_id' => $avatarId,
             'elo' => ELO_STARTING,
             'gold' => 0,
             'games_played' => 0,
@@ -135,6 +139,7 @@ function loginAccount() {
             'id' => $account['id'],
             'nickname' => $account['nickname'],
             'code' => $account['account_code'],
+            'avatar_id' => (int)($account['avatar_id'] ?? 1),
             'elo' => (int)$account['elo'],
             'gold' => (int)$account['gold'],
             'games_played' => (int)$account['games_played'],
@@ -188,6 +193,7 @@ function getProfile() {
         'account' => [
             'id' => $account['id'],
             'nickname' => $account['nickname'],
+            'avatar_id' => (int)($account['avatar_id'] ?? 1),
             'elo' => (int)$account['elo'],
             'gold' => (int)$account['gold'],
             'games_played' => (int)$account['games_played'],
