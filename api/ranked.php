@@ -50,6 +50,13 @@ function joinQueue() {
         jsonResponse(['error' => 'Must be logged in to play ranked'], 401);
     }
 
+    // Clean up stale queue entries older than 10 minutes
+    $stmt = $db->prepare("
+        UPDATE ranked_queue SET status = 'cancelled' 
+        WHERE status = 'waiting' AND queued_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ");
+    $stmt->execute();
+
     // Check if already in queue - if so, treat as a rejoin
     $stmt = $db->prepare("
         SELECT id FROM ranked_queue 
@@ -75,6 +82,12 @@ function joinQueue() {
             INSERT INTO ranked_queue (account_id, status) VALUES (?, 'waiting')
         ");
         $stmt->execute([$accountId]);
+    } else {
+        // Refresh the timestamp so it doesn't get cleaned up
+        $stmt = $db->prepare("
+            UPDATE ranked_queue SET queued_at = NOW() WHERE id = ?
+        ");
+        $stmt->execute([$existingEntry['id']]);
     }
 
     // Check if we have enough players waiting
@@ -104,6 +117,7 @@ function joinQueue() {
             'success' => true,
             'status' => 'waiting',
             'queue_position' => count($waitingPlayers),
+            'total_needed' => RANKED_PLAYERS,
             'players_needed' => RANKED_PLAYERS - count($waitingPlayers),
             'message' => 'In queue. Waiting for ' . (RANKED_PLAYERS - count($waitingPlayers)) . ' more players...'
         ]);
@@ -141,7 +155,14 @@ function checkQueue() {
         jsonResponse(['error' => 'Not logged in'], 401);
     }
 
-    // Check if matched
+    // Clean up stale queue entries older than 10 minutes
+    $stmt = $db->prepare("
+        UPDATE ranked_queue SET status = 'cancelled' 
+        WHERE status = 'waiting' AND queued_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ");
+    $stmt->execute();
+
+    // Check if already matched
     $stmt = $db->prepare("
         SELECT rq.*, r.room_code
         FROM ranked_queue rq
@@ -188,19 +209,61 @@ function checkQueue() {
         }
     }
 
-    // Still waiting
+    // Still waiting - check if enough players to create a match now
     $stmt = $db->prepare("
-        SELECT COUNT(*) as waiting_count
-        FROM ranked_queue
-        WHERE status = 'waiting'
+        SELECT rq.id, rq.account_id, a.nickname
+        FROM ranked_queue rq
+        JOIN accounts a ON rq.account_id = a.id
+        WHERE rq.status = 'waiting'
+        ORDER BY rq.queued_at ASC
+        LIMIT " . RANKED_PLAYERS . "
     ");
     $stmt->execute();
-    $count = $stmt->fetch()['waiting_count'];
+    $waitingPlayers = $stmt->fetchAll();
+    $count = count($waitingPlayers);
+
+    if ($count >= RANKED_PLAYERS) {
+        // Enough players gathered while polling! Create the match
+        $result = createRankedGame($db, $waitingPlayers);
+        
+        // Check if this player is in the match
+        $isInMatch = false;
+        foreach ($waitingPlayers as $wp) {
+            if ($wp['account_id'] == $accountId) {
+                $isInMatch = true;
+                break;
+            }
+        }
+        
+        if ($isInMatch) {
+            // Find this player's data in the new room
+            $stmt = $db->prepare("
+                SELECT r.room_code, r.id as room_id, p.id as player_id, p.player_number
+                FROM players p
+                JOIN rooms r ON p.room_id = r.id
+                WHERE p.account_id = ? AND r.id = ?
+            ");
+            $stmt->execute([$accountId, $result['room_id']]);
+            $match = $stmt->fetch();
+            
+            if ($match) {
+                jsonResponse([
+                    'success' => true,
+                    'status' => 'matched',
+                    'room_code' => $match['room_code'],
+                    'room_id' => $match['room_id'],
+                    'player_id' => $match['player_id'],
+                    'player_number' => $match['player_number']
+                ]);
+            }
+        }
+    }
 
     jsonResponse([
         'success' => true,
         'status' => 'waiting',
         'queue_position' => $count,
+        'total_needed' => RANKED_PLAYERS,
         'players_needed' => max(0, RANKED_PLAYERS - $count)
     ]);
 }

@@ -430,6 +430,10 @@ function toggleCodeReveal() {
         DOM.codeDisplay.textContent = GameState.account.code;
         DOM.codeDisplay.dataset.revealed = 'true';
         DOM.codeDisplay.classList.add('revealed');
+        // Copy to clipboard
+        navigator.clipboard.writeText(GameState.account.code).then(() => {
+            showToast('Código copiado!', 'success', 2000);
+        }).catch(() => {});
     }
 }
 
@@ -537,7 +541,10 @@ async function joinRankedQueue() {
             // Show queue panel
             DOM.rankedQueuePanel?.classList.remove('hidden');
             if (DOM.rankedQueueStatus) DOM.rankedQueueStatus.textContent = result.message;
-            if (DOM.rankedQueueCount) DOM.rankedQueueCount.textContent = `${4 - result.players_needed}/4 jogadores`;
+            if (DOM.rankedQueueCount) {
+                const total = result.total_needed || 4;
+                DOM.rankedQueueCount.textContent = `${total - result.players_needed}/${total} jogadores`;
+            }
             
             // Start polling for queue status
             startQueuePolling();
@@ -590,7 +597,8 @@ function startQueuePolling() {
                     DOM.rankedQueuePanel?.classList.add('hidden');
                 } else {
                     if (DOM.rankedQueueCount) {
-                        DOM.rankedQueueCount.textContent = `${4 - (result.players_needed || 0)}/4 jogadores`;
+                        const total = result.total_needed || 4;
+                        DOM.rankedQueueCount.textContent = `${total - (result.players_needed || 0)}/${total} jogadores`;
                     }
                 }
             }
