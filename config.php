@@ -18,7 +18,7 @@ ini_set('log_errors', 1);
 define('DB_HOST', 'localhost');
 define('DB_NAME', 'u141652417_pokeweb');
 define('DB_USER', 'u141652417_pokewebuser');
-define('DB_PASS', 'Poke1b2c3**');
+define('DB_PASS', 'Andre159**');
 
 // ===========================================
 // GAME CONFIGURATION v2.0
