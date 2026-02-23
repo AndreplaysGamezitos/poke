@@ -27,7 +27,7 @@ define('DB_PASS', 'Andre159**');
 // Player limits
 define('MAX_PLAYERS', 8);
 define('MIN_PLAYERS', 2);
-define('RANKED_PLAYERS', 4); // Ranked mode requires 4 for easier testing
+define('RANKED_PLAYERS', 6); // Ranked mode requires 4 for easier testing
 define('MAX_TEAM_SIZE', 6);
 
 // Route / Game structure
