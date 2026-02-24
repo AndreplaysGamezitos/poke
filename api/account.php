@@ -26,6 +26,9 @@ try {
         case 'login':
             loginAccount();
             break;
+        case 'restore_session':
+            restoreSession();
+            break;
         case 'profile':
             getProfile();
             break;
@@ -146,6 +149,87 @@ function loginAccount() {
             'games_won' => (int)$account['games_won']
         ]
     ]);
+}
+
+/**
+ * Restore session from saved account data (called on page reload)
+ * Validates account credentials, restores PHP session, and checks for active game
+ */
+function restoreSession() {
+    $db = getDB();
+
+    $accountId = intval($_POST['account_id'] ?? 0);
+    $code = trim($_POST['code'] ?? '');
+
+    if (!$accountId || empty($code)) {
+        jsonResponse(['error' => 'Account ID and code are required'], 400);
+    }
+
+    // Validate account credentials
+    $stmt = $db->prepare("SELECT * FROM accounts WHERE id = ? AND account_code = ?");
+    $stmt->execute([$accountId, $code]);
+    $account = $stmt->fetch();
+
+    if (!$account) {
+        jsonResponse(['error' => 'Invalid account credentials'], 401);
+    }
+
+    // Restore account session
+    $_SESSION['account_id'] = $account['id'];
+    $_SESSION['account_code'] = $account['account_code'];
+    $_SESSION['account_nickname'] = $account['nickname'];
+
+    // Build response with fresh account data
+    $response = [
+        'success' => true,
+        'account' => [
+            'id' => $account['id'],
+            'nickname' => $account['nickname'],
+            'code' => $account['account_code'],
+            'avatar_id' => (int)($account['avatar_id'] ?? 1),
+            'elo' => (int)$account['elo'],
+            'gold' => (int)$account['gold'],
+            'games_played' => (int)$account['games_played'],
+            'games_won' => (int)$account['games_won']
+        ],
+        'active_game' => null
+    ];
+
+    // Check for an active game (room not finished) for this account
+    $stmt = $db->prepare("
+        SELECT p.id as player_id, p.player_number, p.is_host, p.room_id,
+               r.room_code, r.game_state, r.game_mode
+        FROM players p
+        JOIN rooms r ON p.room_id = r.id
+        WHERE p.account_id = ? AND r.game_state NOT IN ('finished')
+        ORDER BY r.created_at DESC
+        LIMIT 1
+    ");
+    $stmt->execute([$account['id']]);
+    $activePlayer = $stmt->fetch();
+
+    if ($activePlayer) {
+        // Restore game session
+        $_SESSION['player_id'] = $activePlayer['player_id'];
+        $_SESSION['room_id'] = $activePlayer['room_id'];
+        $_SESSION['room_code'] = $activePlayer['room_code'];
+
+        // Update session_id on the player record so SSE/WS can identify them
+        $stmt = $db->prepare("UPDATE players SET session_id = ? WHERE id = ?");
+        $stmt->execute([session_id(), $activePlayer['player_id']]);
+
+        $response['active_game'] = [
+            'room_code' => $activePlayer['room_code'],
+            'room_id' => $activePlayer['room_id'],
+            'player_id' => $activePlayer['player_id'],
+            'player_number' => (int)$activePlayer['player_number'],
+            'is_host' => (bool)$activePlayer['is_host'],
+            'game_state' => $activePlayer['game_state'],
+            'game_mode' => $activePlayer['game_mode']
+        ];
+    }
+
+    jsonResponse($response);
 }
 
 /**
