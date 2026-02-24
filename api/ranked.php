@@ -52,8 +52,15 @@ function joinQueue() {
 
     // Clean up stale queue entries older than 10 minutes
     $stmt = $db->prepare("
-        UPDATE ranked_queue SET status = 'cancelled' 
+        DELETE FROM ranked_queue 
         WHERE status = 'waiting' AND queued_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
+    ");
+    $stmt->execute();
+
+    // Also clean up old cancelled/matched entries to prevent unique key conflicts
+    $stmt = $db->prepare("
+        DELETE FROM ranked_queue 
+        WHERE status IN ('cancelled', 'matched') AND queued_at < DATE_SUB(NOW(), INTERVAL 1 HOUR)
     ");
     $stmt->execute();
 
@@ -105,11 +112,28 @@ function joinQueue() {
     if (count($waitingPlayers) >= RANKED_PLAYERS) {
         // We have enough players! Create ranked game
         $result = createRankedGame($db, $waitingPlayers);
+        
+        // Find the current player's record in the new room and set their session
+        $stmt = $db->prepare("
+            SELECT id, player_number FROM players 
+            WHERE account_id = ? AND room_id = ?
+        ");
+        $stmt->execute([$accountId, $result['room_id']]);
+        $myPlayer = $stmt->fetch();
+        
+        if ($myPlayer) {
+            $_SESSION['player_id'] = $myPlayer['id'];
+            $_SESSION['room_id'] = $result['room_id'];
+            $_SESSION['room_code'] = $result['room_code'];
+        }
+        
         jsonResponse([
             'success' => true,
             'status' => 'matched',
             'room_code' => $result['room_code'],
             'room_id' => $result['room_id'],
+            'player_id' => $myPlayer['id'] ?? null,
+            'player_number' => $myPlayer['player_number'] ?? null,
             'message' => 'Match found! Game starting...'
         ]);
     } else {
@@ -136,7 +160,7 @@ function leaveQueue() {
     }
 
     $stmt = $db->prepare("
-        UPDATE ranked_queue SET status = 'cancelled' 
+        DELETE FROM ranked_queue 
         WHERE account_id = ? AND status = 'waiting'
     ");
     $stmt->execute([$accountId]);
@@ -157,7 +181,7 @@ function checkQueue() {
 
     // Clean up stale queue entries older than 10 minutes
     $stmt = $db->prepare("
-        UPDATE ranked_queue SET status = 'cancelled' 
+        DELETE FROM ranked_queue 
         WHERE status = 'waiting' AND queued_at < DATE_SUB(NOW(), INTERVAL 10 MINUTE)
     ");
     $stmt->execute();
@@ -198,6 +222,11 @@ function checkQueue() {
         $match = $stmt->fetch();
 
         if ($match) {
+            // Set session for this player
+            $_SESSION['player_id'] = $match['player_id'];
+            $_SESSION['room_id'] = $match['room_id'];
+            $_SESSION['room_code'] = $match['room_code'];
+            
             jsonResponse([
                 'success' => true,
                 'status' => 'matched',
@@ -247,6 +276,11 @@ function checkQueue() {
             $match = $stmt->fetch();
             
             if ($match) {
+                // Set session for this player
+                $_SESSION['player_id'] = $match['player_id'];
+                $_SESSION['room_id'] = $match['room_id'];
+                $_SESSION['room_code'] = $match['room_code'];
+                
                 jsonResponse([
                     'success' => true,
                     'status' => 'matched',
