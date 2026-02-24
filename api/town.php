@@ -1120,8 +1120,15 @@ function toggleReady($pdo) {
         $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament' WHERE id = ?");
         $stmt->execute([$room['id']]);
         
-        // Log phase transition
+        // Log phase transition (town-specific event)
         logTownEvent($pdo, $room['id'], 'phase_change', [
+            'new_phase' => 'tournament',
+            'message' => 'All players ready! Starting Tournament Phase...'
+        ]);
+        
+        // Also broadcast generic phase_changed event for consistency
+        // This ensures any client polling or listening for phase_changed will catch it
+        broadcastEvent($room['id'], 'phase_changed', [
             'new_phase' => 'tournament',
             'message' => 'All players ready! Starting Tournament Phase...'
         ]);

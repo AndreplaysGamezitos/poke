@@ -215,7 +215,17 @@ function selectStarter() {
         $stmt->execute([$roomId, $randomFirstPlayer]);
         $firstPlayer = $stmt->fetch();
         
-        // Add game event
+        // Broadcast the last player's starter_selected event first
+        // so all other clients see the final pick before the phase change
+        addGameEvent($roomId, 'starter_selected', [
+            'player_id' => $playerId,
+            'player_number' => $player['player_number'],
+            'pokemon_id' => $pokemonId,
+            'pokemon_name' => $pokemon['name'],
+            'next_turn' => -1
+        ]);
+        
+        // Then broadcast phase change
         addGameEvent($roomId, 'phase_changed', [
             'new_phase' => 'catching',
             'route' => 1,

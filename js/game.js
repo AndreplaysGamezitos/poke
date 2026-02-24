@@ -29,7 +29,10 @@ const GameState = {
     isMyTurn: false,
     currentRoute: 1,
     encountersRemaining: 0,
-    catchAnimationInProgress: false
+    catchAnimationInProgress: false,
+    // Polling/watchdog intervals
+    selectionPollInterval: null,
+    gameStateWatchdogInterval: null
 };
 
 // Avatar options (using emojis for simplicity, can be replaced with images)
@@ -791,6 +794,7 @@ async function leaveGame() {
     // Disconnect real-time connection
     disconnectRealtime();
     stopSelectionPolling();
+    stopGameStateWatchdog();
     
     // Reset all game state
     GameState.roomCode = null;
@@ -822,6 +826,7 @@ function returnToMenu() {
     // Disconnect real-time connection
     disconnectRealtime();
     stopSelectionPolling();
+    stopGameStateWatchdog();
     
     // Reset GameState
     GameState.roomCode = null;
@@ -1045,6 +1050,9 @@ function enterLobby() {
     
     // Start real-time connection (WebSocket with SSE fallback)
     connectRealtime();
+    
+    // Start game state watchdog (safety net for missed real-time events)
+    startGameStateWatchdog();
     
     // Initial room state fetch
     refreshRoomState();
@@ -1363,23 +1371,17 @@ function connectSSE() {
     // Town Phase Events
     GameState.eventSource.addEventListener('town_purchase', (e) => {
         const data = JSON.parse(e.data);
-        if (GameState.currentScreen === 'town') {
-            handleTownEvent('town_purchase', data.data);
-        }
+        handleTownEvent('town_purchase', data.data);
     });
     
     GameState.eventSource.addEventListener('town_sell', (e) => {
         const data = JSON.parse(e.data);
-        if (GameState.currentScreen === 'town') {
-            handleTownEvent('town_sell', data.data);
-        }
+        handleTownEvent('town_sell', data.data);
     });
     
     GameState.eventSource.addEventListener('town_ready_toggle', (e) => {
         const data = JSON.parse(e.data);
-        if (GameState.currentScreen === 'town') {
-            handleTownEvent('town_ready_toggle', data.data);
-        }
+        handleTownEvent('town_ready_toggle', data.data);
     });
     
     GameState.eventSource.addEventListener('town_phase_change', (e) => {
@@ -1389,9 +1391,7 @@ function connectSSE() {
     
     GameState.eventSource.addEventListener('town_switch_active', (e) => {
         const data = JSON.parse(e.data);
-        if (GameState.currentScreen === 'town') {
-            handleTownEvent('town_switch_active', data.data);
-        }
+        handleTownEvent('town_switch_active', data.data);
     });
     
     // Tournament Phase Events
@@ -1409,9 +1409,7 @@ function connectSSE() {
     
     GameState.eventSource.addEventListener('tournament_updated', (e) => {
         const data = JSON.parse(e.data);
-        if (GameState.currentScreen === 'tournament') {
-            handleTournamentEvent('tournament_updated', data.data);
-        }
+        handleTournamentEvent('tournament_updated', data.data);
     });
     
     GameState.eventSource.addEventListener('game_finished', (e) => {
@@ -1682,9 +1680,9 @@ function handleWebSocketMessage(message) {
         case 'town_sell':
         case 'town_ready_toggle':
         case 'town_switch_active':
-            if (GameState.currentScreen === 'town') {
-                handleTownEvent(eventType, eventData);
-            }
+            // Always handle town events - don't gate on currentScreen
+            // because the screen might not have transitioned yet
+            handleTownEvent(eventType, eventData);
             break;
             
         case 'town_phase_change':
@@ -1702,9 +1700,8 @@ function handleWebSocketMessage(message) {
             break;
             
         case 'tournament_updated':
-            if (GameState.currentScreen === 'tournament') {
-                handleTournamentEvent('tournament_updated', eventData);
-            }
+            // Always handle tournament updates regardless of current screen
+            handleTournamentEvent('tournament_updated', eventData);
             break;
             
         case 'game_finished':
@@ -1836,7 +1833,25 @@ function disconnectRealtime() {
  * Handle game state changes
  */
 function handleGameStateChange(newState) {
-    if (newState === GameState.gameState && GameState.currentScreen !== 'lobby') return;
+    // Map game states to expected screens
+    const stateToScreen = {
+        'lobby': 'lobby',
+        'initial': 'initial',
+        'catching': 'catching',
+        'town': 'town',
+        'tournament': 'tournament',
+        'battle': 'battle',
+        'finished': 'victory'
+    };
+    
+    const expectedScreen = stateToScreen[newState];
+    const alreadyOnCorrectScreen = expectedScreen && GameState.currentScreen === expectedScreen;
+    
+    // Skip if we're already in this state AND on the correct screen
+    // (unless we're in lobby, where we always re-process to handle game_started)
+    if (newState === GameState.gameState && alreadyOnCorrectScreen && newState !== 'lobby') return;
+    
+    console.log(`[StateChange] ${GameState.gameState} → ${newState} (screen: ${GameState.currentScreen} → ${expectedScreen})`);
     
     GameState.gameState = newState;
     
@@ -1869,6 +1884,8 @@ function handleGameStateChange(newState) {
             initBattlePhase();
             break;
         case 'finished':
+            stopSelectionPolling();
+            stopGameStateWatchdog();
             switchScreen('victory');
             loadVictoryScreen();
             break;
@@ -2048,7 +2065,12 @@ async function selectStarter(pokemonId) {
             
             if (result.phase_complete) {
                 showToast('Todos os jogadores escolheram! Iniciando fase de captura...', 'info');
-                // Phase transition will happen via SSE
+                // Transition directly — don't rely solely on WS/SSE event
+                // The WS/SSE event may also arrive, but handleGameStateChange
+                // will ignore it if we're already on the catching screen
+                setTimeout(() => {
+                    handleGameStateChange('catching');
+                }, 1500);
             } else {
                 // Refresh selection state
                 await refreshSelectionState();
@@ -2072,6 +2094,14 @@ async function refreshSelectionState() {
         const result = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
         
         if (result.success) {
+            // Check if game state has changed (e.g., initial → catching)
+            // This handles the case where a WS/SSE phase_changed event was missed
+            if (result.game_state && result.game_state !== 'initial') {
+                console.log(`Selection polling detected phase change to: ${result.game_state}`);
+                handleGameStateChange(result.game_state);
+                return;
+            }
+            
             GameState.selectionState = result;
             // Only render if starters have been loaded
             if (GameState.starters) {
@@ -2107,6 +2137,49 @@ function stopSelectionPolling() {
     }
 }
 
+/**
+ * Start a general-purpose game state watchdog.
+ * Periodically checks the server's current game_state and triggers
+ * phase transitions if a WS/SSE event was missed.
+ * This is a safety net — real-time events should handle most transitions.
+ */
+function startGameStateWatchdog() {
+    stopGameStateWatchdog();
+    GameState.gameStateWatchdogInterval = setInterval(async () => {
+        // Only run if we're in an active game
+        if (!GameState.roomCode) {
+            stopGameStateWatchdog();
+            return;
+        }
+        
+        try {
+            const result = await apiCall(`${API.room}?action=get_room&room_code=${GameState.roomCode}`, {}, 'GET');
+            if (result.success && result.room) {
+                const serverState = result.room.game_state;
+                // If the server's game state differs from ours, transition
+                if (serverState && serverState !== GameState.gameState) {
+                    console.log(`[Watchdog] Detected state mismatch: local=${GameState.gameState}, server=${serverState}. Transitioning...`);
+                    GameState.players = result.players || GameState.players;
+                    handleGameStateChange(serverState);
+                }
+            }
+        } catch (error) {
+            // Silently ignore — this is a background safety check
+            console.debug('[Watchdog] Poll error:', error);
+        }
+    }, 5000); // Check every 5 seconds
+}
+
+/**
+ * Stop the game state watchdog
+ */
+function stopGameStateWatchdog() {
+    if (GameState.gameStateWatchdogInterval) {
+        clearInterval(GameState.gameStateWatchdogInterval);
+        GameState.gameStateWatchdogInterval = null;
+    }
+}
+
 // ============================================
 // CATCHING PHASE FUNCTIONS
 // ============================================
@@ -2136,6 +2209,14 @@ async function refreshCatchingState() {
         const result = await apiCall(`${API.catching}?action=get_state&room_code=${GameState.roomCode}`, {}, 'GET');
         
         if (result.success) {
+            // Check if game state has changed (e.g., catching → town)
+            // This handles the case where a WS/SSE phase_changed event was missed
+            if (result.room.game_state && result.room.game_state !== 'catching') {
+                console.log(`Catching state polling detected phase change to: ${result.room.game_state}`);
+                handleGameStateChange(result.room.game_state);
+                return;
+            }
+            
             GameState.catchingState = result;
             GameState.wildPokemon = result.wild_pokemon;
             GameState.currentRoute = result.room.current_route || 1;
@@ -2717,6 +2798,13 @@ async function refreshTownState() {
         
         if (!result.success) {
             showToast('Falha ao carregar estado da cidade', 'error');
+            return;
+        }
+        
+        // Check if game state has changed (e.g., town → tournament)
+        if (result.room.game_state && result.room.game_state !== 'town') {
+            console.log(`Town state polling detected phase change to: ${result.room.game_state}`);
+            handleGameStateChange(result.room.game_state);
             return;
         }
         
@@ -3510,6 +3598,13 @@ async function refreshTournamentState() {
         
         if (!result.success) {
             showToast('Falha ao carregar estado do torneio', 'error');
+            return;
+        }
+        
+        // Check if game state has changed (e.g., tournament → catching for next route, or finished)
+        if (result.room.game_state && result.room.game_state !== 'tournament') {
+            console.log(`Tournament state polling detected phase change to: ${result.room.game_state}`);
+            handleGameStateChange(result.room.game_state);
             return;
         }
         
