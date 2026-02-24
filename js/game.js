@@ -790,6 +790,7 @@ async function leaveGame() {
     
     // Disconnect real-time connection
     disconnectRealtime();
+    stopSelectionPolling();
     
     // Reset all game state
     GameState.roomCode = null;
@@ -820,6 +821,7 @@ function returnToMenu() {
     
     // Disconnect real-time connection
     disconnectRealtime();
+    stopSelectionPolling();
     
     // Reset GameState
     GameState.roomCode = null;
@@ -1233,10 +1235,9 @@ function connectSSE() {
         const playerName = GameState.players.find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
         showToast(`${playerName} escolheu ${data.data.pokemon_name}!`, 'info');
         
-        // Refresh selection state if we're on the initial screen
-        if (GameState.currentScreen === 'initial') {
-            refreshSelectionState();
-        }
+        // Always refresh selection state - handles race conditions where
+        // the event arrives before screen transition completes
+        refreshSelectionState();
     });
     
     GameState.eventSource.addEventListener('phase_changed', (e) => {
@@ -1614,9 +1615,8 @@ function handleWebSocketMessage(message) {
         case 'starter_selected':
             const playerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
             showToast(`${playerName} escolheu ${eventData.pokemon_name}!`, 'info');
-            if (GameState.currentScreen === 'initial') {
-                refreshSelectionState();
-            }
+            // Always refresh - handles race conditions where event arrives before screen transition
+            refreshSelectionState();
             break;
             
         case 'phase_changed':
@@ -1849,8 +1849,10 @@ function handleGameStateChange(newState) {
         case 'initial':
             switchScreen('initial');
             loadStarterPokemon();
+            startSelectionPolling();
             break;
         case 'catching':
+            stopSelectionPolling();
             switchScreen('catching');
             initCatchingPhase();
             break;
@@ -2071,10 +2073,37 @@ async function refreshSelectionState() {
         
         if (result.success) {
             GameState.selectionState = result;
-            renderStarterSelection();
+            // Only render if starters have been loaded
+            if (GameState.starters) {
+                renderStarterSelection();
+            }
         }
     } catch (error) {
         console.error('Error refreshing selection state:', error);
+    }
+}
+
+/**
+ * Start polling for selection state updates (fallback for missed WS events)
+ */
+function startSelectionPolling() {
+    stopSelectionPolling();
+    GameState.selectionPollInterval = setInterval(() => {
+        if (GameState.currentScreen === 'initial') {
+            refreshSelectionState();
+        } else {
+            stopSelectionPolling();
+        }
+    }, 3000);
+}
+
+/**
+ * Stop selection phase polling
+ */
+function stopSelectionPolling() {
+    if (GameState.selectionPollInterval) {
+        clearInterval(GameState.selectionPollInterval);
+        GameState.selectionPollInterval = null;
     }
 }
 
