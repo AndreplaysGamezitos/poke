@@ -532,6 +532,8 @@ async function joinRankedQueue() {
                 showToast('Partida encontrada!', 'success');
                 GameState.roomCode = result.room_code;
                 GameState.roomId = result.room_id;
+                GameState.playerId = result.player_id;
+                GameState.playerNumber = parseInt(result.player_number);
                 GameState.gameMode = 'ranked';
                 DOM.rankedQueuePanel?.classList.add('hidden');
                 setLoading(false);
@@ -589,6 +591,7 @@ function startQueuePolling() {
                     GameState.roomCode = result.room_code;
                     GameState.roomId = result.room_id;
                     GameState.playerId = result.player_id;
+                    GameState.playerNumber = parseInt(result.player_number);
                     GameState.gameMode = 'ranked';
                     DOM.rankedQueuePanel?.classList.add('hidden');
                     enterLobby();
@@ -898,7 +901,7 @@ async function createRoom() {
             GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = result.player_number;
+            GameState.playerNumber = parseInt(result.player_number);
             GameState.isHost = result.is_host;
             
             showToast('Sala criada com sucesso!', 'success');
@@ -941,7 +944,7 @@ async function joinRoom() {
             GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = result.player_number;
+            GameState.playerNumber = parseInt(result.player_number);
             GameState.isHost = result.is_host;
             
             showToast(result.rejoined ? 'Reconectou à sala!' : 'Entrou na sala!', 'success');
@@ -1849,8 +1852,8 @@ function renderStarterSelection() {
     const starters = GameState.starters || [];
     const state = GameState.selectionState || {};
     const players = state.players || [];
-    const currentTurn = state.current_turn ?? 0;
-    const isMyTurn = GameState.playerNumber === currentTurn;
+    const currentTurn = parseInt(state.current_turn ?? 0);
+    const isMyTurn = GameState.playerNumber == currentTurn;
     
     // Find which Pokemon have been selected
     const selectedPokemonIds = players
@@ -5068,7 +5071,7 @@ async function checkExistingSession() {
             const currentPlayer = result.players.find(p => p.id == result.current_player_id);
             if (currentPlayer) {
                 GameState.playerId = currentPlayer.id;
-                GameState.playerNumber = currentPlayer.player_number;
+                GameState.playerNumber = parseInt(currentPlayer.player_number);
                 GameState.isHost = currentPlayer.is_host;
                 GameState.players = result.players;
                 
