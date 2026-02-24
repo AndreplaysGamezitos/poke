@@ -13,8 +13,8 @@ const express = require('express');
 const http = require('http');
 
 // Configuration
-const PORT = process.env.PORT || 3000;
-const BROADCAST_SECRET = process.env.BROADCAST_SECRET || 'pokefodase_secret_key_change_in_production';
+const PORT = process.env.PORT || 3001;
+const BROADCAST_SECRET = process.env.BROADCAST_SECRET || '9af4a317f97e4a09aa6d2df96b18403d1642e8abe43b484dbe103a021ba69f65';
 
 // Create Express app for HTTP endpoints (PHP will POST events here)
 const app = express();

@@ -9,8 +9,8 @@
 require_once __DIR__ . '/../config.php';
 
 // WebSocket Server Configuration
-define('WS_SERVER_URL', 'http://localhost:3000/broadcast'); // Change in production
-define('WS_BROADCAST_SECRET', 'pokefodase_secret_key_change_in_production');
+define('WS_SERVER_URL', 'http://localhost:3001/broadcast'); // Must match the PORT in websocket/ecosystem.config.js
+define('WS_BROADCAST_SECRET', '9af4a317f97e4a09aa6d2df96b18403d1642e8abe43b484dbe103a021ba69f65');
 define('WS_ENABLED', true); // Set to false to disable WebSocket and use SSE only
 
 /**
@@ -92,12 +92,12 @@ function sendToWebSocketServer($roomCode, $eventType, $eventData) {
     curl_close($ch);
     
     if ($error) {
-        error_log("WebSocket server cURL error: $error");
+        error_log("WS broadcast cURL error for '$eventType' in room $roomCode → " . WS_SERVER_URL . ": $error");
         return false;
     }
     
     if ($httpCode !== 200) {
-        error_log("WebSocket server returned HTTP $httpCode: $response");
+        error_log("WS broadcast HTTP $httpCode for '$eventType' in room $roomCode → " . WS_SERVER_URL . ": $response");
         return false;
     }
     
