@@ -75,13 +75,33 @@ function joinQueue() {
     if (!$existingEntry) {
         // Check if already in an active game
         $stmt = $db->prepare("
-            SELECT p.id FROM players p
+            SELECT p.id as player_id, p.player_number, p.is_host,
+                   r.id as room_id, r.room_code, r.game_state, r.game_mode
+            FROM players p
             JOIN rooms r ON p.room_id = r.id
             WHERE p.account_id = ? AND r.game_state NOT IN ('finished', 'lobby')
         ");
         $stmt->execute([$accountId]);
-        if ($stmt->fetch()) {
-            jsonResponse(['error' => 'Already in an active game'], 400);
+        $activeGame = $stmt->fetch();
+        if ($activeGame) {
+            // Restore their session so they can reconnect
+            $_SESSION['player_id'] = $activeGame['player_id'];
+            $_SESSION['room_id'] = $activeGame['room_id'];
+            $_SESSION['room_code'] = $activeGame['room_code'];
+            
+            jsonResponse([
+                'success' => false,
+                'error' => 'Already in an active game',
+                'active_game' => [
+                    'room_code' => $activeGame['room_code'],
+                    'room_id' => $activeGame['room_id'],
+                    'player_id' => $activeGame['player_id'],
+                    'player_number' => (int)$activeGame['player_number'],
+                    'is_host' => (bool)$activeGame['is_host'],
+                    'game_state' => $activeGame['game_state'],
+                    'game_mode' => $activeGame['game_mode']
+                ]
+            ], 400);
         }
 
         // Add to queue

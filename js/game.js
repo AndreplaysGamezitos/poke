@@ -89,16 +89,19 @@ let DOM = {};
 /**
  * Initialize the game
  */
-function init() {
+async function init() {
     cacheDOM();
     setupEventListeners();
     setupAvatarSelectors();
     
-    // Check for saved account
-    loadSavedAccount();
+    // Check for saved account and restore backend session
+    const hasAccount = await loadSavedAccount();
     
-    // Check for existing session
-    checkExistingSession();
+    // Only check existing PHP session if no account was restored
+    // (restoreBackendSession already handles reconnection for logged-in users)
+    if (!hasAccount) {
+        checkExistingSession();
+    }
 }
 
 /**
@@ -371,16 +374,20 @@ function showCreateView() {
     DOM.accountCreateView?.classList.remove('hidden');
 }
 
-function loadSavedAccount() {
+async function loadSavedAccount() {
     const saved = localStorage.getItem('pokefodase_account');
     if (saved) {
         try {
             GameState.account = JSON.parse(saved);
             updateAccountUI();
+            // Restore backend session and check for active game
+            await restoreBackendSession();
+            return true;
         } catch (e) {
             localStorage.removeItem('pokefodase_account');
         }
     }
+    return false;
 }
 
 /**
@@ -390,6 +397,52 @@ function saveAccount(account) {
     GameState.account = account;
     localStorage.setItem('pokefodase_account', JSON.stringify(account));
     updateAccountUI();
+}
+
+/**
+ * Restore backend PHP session from saved account data
+ * Also checks for an active game and reconnects to it
+ */
+async function restoreBackendSession() {
+    if (!GameState.account) return;
+    
+    try {
+        const result = await apiCall(`${API.account}?action=restore_session`, {
+            account_id: GameState.account.id,
+            code: GameState.account.code
+        });
+        
+        if (result.success) {
+            // Update local account data with fresh data from server
+            if (result.account) {
+                saveAccount(result.account);
+            }
+            
+            // If there's an active game, reconnect to it
+            if (result.active_game) {
+                console.log('Active game found, reconnecting:', result.active_game);
+                GameState.roomCode = result.active_game.room_code;
+                GameState.roomId = result.active_game.room_id;
+                GameState.playerId = result.active_game.player_id;
+                GameState.playerNumber = parseInt(result.active_game.player_number);
+                GameState.isHost = result.active_game.is_host;
+                GameState.gameMode = result.active_game.game_mode || 'casual';
+                
+                showToast('Reconectado à partida!', 'success');
+                enterLobby();
+                handleGameStateChange(result.active_game.game_state);
+            }
+        } else {
+            // Session restore failed — account may be invalid, clear it
+            console.warn('Session restore failed:', result.error);
+            GameState.account = null;
+            localStorage.removeItem('pokefodase_account');
+            updateAccountUI();
+        }
+    } catch (error) {
+        console.error('Error restoring session:', error);
+        // Don't clear account on network error, might be temporary
+    }
 }
 
 /**
@@ -551,6 +604,20 @@ async function joinRankedQueue() {
             // Start polling for queue status
             startQueuePolling();
         } else {
+            // Check if the error includes active game info for reconnection
+            if (result.active_game) {
+                showToast('Reconectando à partida ativa...', 'info');
+                GameState.roomCode = result.active_game.room_code;
+                GameState.roomId = result.active_game.room_id;
+                GameState.playerId = result.active_game.player_id;
+                GameState.playerNumber = parseInt(result.active_game.player_number);
+                GameState.isHost = result.active_game.is_host;
+                GameState.gameMode = result.active_game.game_mode || 'ranked';
+                setLoading(false);
+                enterLobby();
+                handleGameStateChange(result.active_game.game_state);
+                return;
+            }
             showToast(result.error || 'Erro ao entrar na fila', 'error');
         }
     } catch (error) {
@@ -5057,8 +5124,14 @@ async function loadVictoryScreen() {
 
 /**
  * Check for existing session on page load
+ * This is a fallback for when restoreBackendSession hasn't reconnected yet
+ * (e.g., if the account was restored but no active game was found via restore,
+ *  but the PHP session still has room data)
  */
 async function checkExistingSession() {
+    // If we already reconnected via restoreBackendSession, skip
+    if (GameState.roomCode) return;
+    
     try {
         // Try to get room state if we have session data
         const result = await apiCall(`${API.room}?action=get_room`, {}, 'GET');
