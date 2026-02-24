@@ -28,7 +28,8 @@ const GameState = {
     wildPokemon: null,
     isMyTurn: false,
     currentRoute: 1,
-    encountersRemaining: 0,
+    turnsPerPlayer: 8,
+    myTurnsTaken: 0,
     catchAnimationInProgress: false,
     // Polling/watchdog intervals
     selectionPollInterval: null,
@@ -190,6 +191,8 @@ function cacheDOM() {
         wildPokemonSpd: document.getElementById('wild-pokemon-spd'),
         wildHpBar: document.getElementById('wild-hp-bar'),
         wildHpText: document.getElementById('wild-hp-text'),
+        wildCatchRate: document.getElementById('wild-catch-rate'),
+        wildCatchRateDisplay: document.getElementById('wild-catch-rate-display'),
         catchingTurnIndicator: document.getElementById('catching-turn-indicator'),
         currentTurnName: document.getElementById('current-turn-name'),
         btnCatch: document.getElementById('btn-catch'),
@@ -808,7 +811,8 @@ async function leaveGame() {
     GameState.wildPokemon = null;
     GameState.isMyTurn = false;
     GameState.currentRoute = 1;
-    GameState.encountersRemaining = 0;
+    GameState.turnsPerPlayer = 8;
+    GameState.myTurnsTaken = 0;
     GameState.lastEventId = 0;
     
     setLoading(false);
@@ -840,7 +844,8 @@ function returnToMenu() {
     GameState.wildPokemon = null;
     GameState.isMyTurn = false;
     GameState.currentRoute = 1;
-    GameState.encountersRemaining = 0;
+    GameState.turnsPerPlayer = 8;
+    GameState.myTurnsTaken = 0;
     GameState.lastEventId = 0;
     GameState.starters = null;
     GameState.selectionState = null;
@@ -2220,10 +2225,13 @@ async function refreshCatchingState() {
             GameState.catchingState = result;
             GameState.wildPokemon = result.wild_pokemon;
             GameState.currentRoute = result.room.current_route || 1;
-            GameState.encountersRemaining = result.room.encounters_remaining || 0;
+            GameState.turnsPerPlayer = result.room.turns_per_player || 8;
+            
+            // Track my turns taken
+            const myPlayer = result.players.find(p => p.id == GameState.playerId);
+            GameState.myTurnsTaken = myPlayer?.turns_taken || 0;
             
             // Check if it's my turn
-            const myPlayer = result.players.find(p => p.id == GameState.playerId);
             GameState.isMyTurn = myPlayer && myPlayer.player_number == result.room.current_player_turn;
             
             // Update all UI elements
@@ -2254,10 +2262,13 @@ function renderCatchingUI(data) {
         DOM.routeName.textContent = room.route_name || `Rota ${room.current_route}`;
     }
     if (DOM.encountersRemaining) {
-        DOM.encountersRemaining.textContent = `Encontros: ${room.encounters_remaining}`;
+        // Show current cycle / total turns per player
+        const currentCycle = room.current_cycle || 1;
+        const turnsPerPlayer = room.turns_per_player || 8;
+        DOM.encountersRemaining.textContent = `Ciclo: ${currentCycle}/${turnsPerPlayer}`;
     }
     if (DOM.routeProgress) {
-        DOM.routeProgress.textContent = `Rota ${room.current_route}/8`;
+        DOM.routeProgress.textContent = `Rota ${room.current_route}/5`;
     }
     
     // Update wild Pokemon display
@@ -2330,9 +2341,30 @@ function renderWildPokemon(pokemon) {
         if (DOM.wildHpText) {
             DOM.wildHpText.textContent = `${pokemon.current_hp}/${pokemon.max_hp}`;
         }
+        
+        // Display catch rate
+        if (DOM.wildCatchRate) {
+            const catchRate = pokemon.catch_rate || 30;
+            DOM.wildCatchRate.textContent = `${catchRate}%`;
+            // Color-code: green if high, yellow if medium, red if low
+            DOM.wildCatchRate.className = 'catch-rate-value';
+            if (catchRate >= 60) {
+                DOM.wildCatchRate.classList.add('catch-rate-high');
+            } else if (catchRate >= 35) {
+                DOM.wildCatchRate.classList.add('catch-rate-medium');
+            } else {
+                DOM.wildCatchRate.classList.add('catch-rate-low');
+            }
+        }
+        if (DOM.wildCatchRateDisplay) {
+            DOM.wildCatchRateDisplay.classList.remove('hidden');
+        }
     } else {
         DOM.wildPokemonDisplay.classList.add('hidden');
         DOM.wildPokemonPlaceholder?.classList.remove('hidden');
+        if (DOM.wildCatchRateDisplay) {
+            DOM.wildCatchRateDisplay.classList.add('hidden');
+        }
     }
 }
 
@@ -2375,6 +2407,14 @@ function updateActionButtons(wildPokemon) {
     
     if (DOM.btnCatch) {
         DOM.btnCatch.disabled = !canAct;
+        // Update catch button text to show current catch rate
+        const btnText = DOM.btnCatch.querySelector('.btn-text');
+        if (btnText && wildPokemon) {
+            const catchRate = wildPokemon.catch_rate || 30;
+            btnText.textContent = `Capturar (${catchRate}%)`;
+        } else if (btnText) {
+            btnText.textContent = 'Capturar';
+        }
     }
     if (DOM.btnUltraCatch) {
         // Check if player has ultra balls
@@ -2440,11 +2480,16 @@ function renderPlayersPanel(players, currentTurn) {
             teamHtml = '<div class="no-pokemon">Nenhum Pokémon ainda</div>';
         }
         
+        const turnsTaken = player.turns_taken || 0;
+        const turnsPerPlayer = GameState.turnsPerPlayer || 8;
+        const turnsRemaining = Math.max(0, turnsPerPlayer - turnsTaken);
+        
         card.innerHTML = `
             <div class="catching-player-header">
                 <span class="player-avatar-mini">${avatarEmoji}</span>
                 <span class="player-name">${escapeHtml(player.player_name)}</span>
                 ${player.player_number == currentTurn ? '<span class="turn-badge">🎯</span>' : ''}
+                <span class="turns-badge" title="Turnos restantes">🔄 ${turnsRemaining}</span>
             </div>
             ${teamHtml}
             <div class="catching-player-stats">

@@ -205,10 +205,14 @@ function selectStarter() {
             SET game_state = 'catching', 
                 current_player_turn = ?,
                 current_route = 1,
-                encounters_remaining = ? * ?
+                encounters_remaining = 0
             WHERE id = ?
         ");
-        $stmt->execute([$randomFirstPlayer, ENCOUNTERS_PER_PLAYER, $playerCount, $roomId]);
+        $stmt->execute([$randomFirstPlayer, $roomId]);
+        
+        // Reset turns_taken for all players in this room
+        $stmt = $db->prepare("UPDATE players SET turns_taken = 0 WHERE room_id = ?");
+        $stmt->execute([$roomId]);
         
         // Get first player's name for the event
         $stmt = $db->prepare("SELECT player_name FROM players WHERE room_id = ? AND player_number = ?");

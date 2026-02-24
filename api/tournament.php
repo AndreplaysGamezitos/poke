@@ -1114,7 +1114,6 @@ switch ($action) {
         
         // No winner yet - advance to next route
         $newRoute = $currentRoute + 1;
-        $newEncounters = count($players) * 2;
         
         // Randomize who starts the catching phase
         $randomFirstPlayer = rand(0, count($players) - 1);
@@ -1128,8 +1127,8 @@ switch ($action) {
             }
         }
         
-        // Reset player ready status
-        $stmt = $pdo->prepare("UPDATE players SET is_ready = FALSE WHERE room_id = ?");
+        // Reset player ready status and turns_taken for new route
+        $stmt = $pdo->prepare("UPDATE players SET is_ready = FALSE, turns_taken = 0 WHERE room_id = ?");
         $stmt->execute([$room['id']]);
         
         // Clear wild pokemon
@@ -1145,12 +1144,12 @@ switch ($action) {
             UPDATE rooms 
             SET game_state = 'catching', 
                 current_route = ?, 
-                encounters_remaining = ?,
+                encounters_remaining = 0,
                 current_player_turn = ?,
                 game_data = NULL
             WHERE id = ?
         ");
-        $stmt->execute([$newRoute, $newEncounters, $randomFirstPlayer, $room['id']]);
+        $stmt->execute([$newRoute, $randomFirstPlayer, $room['id']]);
         
         broadcastTournamentEvent($pdo, $room['id'], 'phase_changed', [
             'new_phase' => 'catching',

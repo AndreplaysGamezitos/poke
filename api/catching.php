@@ -82,7 +82,8 @@ function getCatchingState() {
     // Get current wild Pokemon
     $stmt = $db->prepare("
         SELECT wp.*, pd.name, pd.type_defense, pd.type_attack, 
-               pd.base_hp, pd.base_attack, pd.base_speed, pd.sprite_url
+               pd.base_hp, pd.base_attack, pd.base_speed, pd.sprite_url,
+               pd.catch_rate as base_catch_rate
         FROM wild_pokemon wp
         JOIN pokemon_dex pd ON wp.pokemon_id = pd.id
         WHERE wp.room_id = ? AND wp.is_active = TRUE
@@ -91,18 +92,35 @@ function getCatchingState() {
     $stmt->execute([$roomId]);
     $wildPokemon = $stmt->fetch();
     
-    // Auto-spawn wild Pokemon if we're in catching phase and there isn't one
-    if (!$wildPokemon && $room['game_state'] === 'catching' && $room['encounters_remaining'] > 0) {
-        spawnWildPokemonForRoom($db, $roomId);
-        // Re-fetch the wild Pokemon
-        $stmt->execute([$roomId]);
-        $wildPokemon = $stmt->fetch();
+    // Auto-spawn wild Pokemon if we're in catching phase and the route isn't done
+    if (!$wildPokemon && $room['game_state'] === 'catching') {
+        // Check if any player still has turns remaining
+        $stmtTurns = $db->prepare("SELECT MIN(turns_taken) as min_turns FROM players WHERE room_id = ?");
+        $stmtTurns->execute([$roomId]);
+        $minTurns = $stmtTurns->fetch()['min_turns'] ?? 0;
+        if ($minTurns < TURNS_PER_PLAYER) {
+            spawnWildPokemonForRoom($db, $roomId);
+            // Re-fetch the wild Pokemon
+            $stmt->execute([$roomId]);
+            $wildPokemon = $stmt->fetch();
+        }
+    }
+    
+    // Calculate effective catch rate if there's a wild Pokemon
+    if ($wildPokemon) {
+        $baseCatchRate = $wildPokemon['base_catch_rate'] ?? 30;
+        $hpRatio = $wildPokemon['max_hp'] > 0 
+            ? $wildPokemon['current_hp'] / $wildPokemon['max_hp'] 
+            : 1;
+        $hpBonus = round((1 - $hpRatio) * 40);
+        $wildPokemon['catch_rate'] = min(95, $baseCatchRate + $hpBonus);
+        $wildPokemon['hp_bonus'] = $hpBonus;
     }
     
     // Get all players with their teams
     $stmt = $db->prepare("
         SELECT p.id, p.player_number, p.player_name, p.avatar_id, 
-               p.money, p.ultra_balls, p.badges
+               p.money, p.ultra_balls, p.badges, p.turns_taken
         FROM players p
         WHERE p.room_id = ?
         ORDER BY p.player_number
@@ -139,6 +157,17 @@ function getCatchingState() {
         $player['team_count'] = count($player['team']);
     }
     
+    // Calculate current cycle: the minimum turns_taken across all players + 1
+    $minTurns = PHP_INT_MAX;
+    $allDone = true;
+    foreach ($players as $p) {
+        $t = $p['turns_taken'] ?? 0;
+        if ($t < $minTurns) $minTurns = $t;
+        if ($t < TURNS_PER_PLAYER) $allDone = false;
+    }
+    if ($minTurns === PHP_INT_MAX) $minTurns = 0;
+    $currentCycle = $minTurns + 1;
+    
     jsonResponse([
         'success' => true,
         'room' => [
@@ -146,6 +175,10 @@ function getCatchingState() {
             'current_route' => $room['current_route'],
             'route_name' => $room['route_name'],
             'current_player_turn' => $room['current_player_turn'],
+            'turns_per_player' => TURNS_PER_PLAYER,
+            'current_cycle' => min($currentCycle, TURNS_PER_PLAYER),
+            'all_turns_done' => $allDone,
+            // Keep encounters_remaining for backward compat (informational only)
             'encounters_remaining' => $room['encounters_remaining']
         ],
         'wild_pokemon' => $wildPokemon,
@@ -309,13 +342,23 @@ function attemptCatch() {
         jsonResponse(['error' => 'No Ultra Balls available'], 400);
     }
     
-    // Get catch rate from pokemon_dex (HP-based, 15-40%)
+    // Get catch rate from pokemon_dex (base rate 15-40%, increases with damage taken)
     $stmt = $db->prepare("SELECT catch_rate FROM pokemon_dex WHERE id = ?");
     $stmt->execute([$wildPokemon['pokemon_id']]);
     $pokemonData = $stmt->fetch();
-    $catchRate = $pokemonData['catch_rate'] ?? 30;
+    $baseCatchRate = $pokemonData['catch_rate'] ?? 30;
     
-    // Determine catch success: random(0,99) < catch_rate
+    // Calculate effective catch rate: base rate + HP damage bonus
+    // At full HP: effective = base rate
+    // As HP drops: effective increases by up to +40%
+    // Formula: effective = base + (1 - current_hp/max_hp) × 40
+    $hpRatio = $wildPokemon['max_hp'] > 0 
+        ? $wildPokemon['current_hp'] / $wildPokemon['max_hp'] 
+        : 1;
+    $hpBonus = round((1 - $hpRatio) * 40);
+    $catchRate = min(95, $baseCatchRate + $hpBonus); // Cap at 95%
+    
+    // Determine catch success: random(0,99) < effective catch rate
     $catchRoll = rand(0, 99);
     $caught = $useUltraBall || ($catchRoll < $catchRate);
     
@@ -328,6 +371,8 @@ function attemptCatch() {
     $result = [
         'catch_roll' => $catchRoll,
         'catch_rate' => $catchRate,
+        'base_catch_rate' => $baseCatchRate,
+        'hp_bonus' => $hpBonus,
         'used_ultra_ball' => $useUltraBall,
         'caught' => $caught
     ];
@@ -359,41 +404,27 @@ function attemptCatch() {
         $stmt->execute([$wildPokemon['id']]);
     }
     
-    // Check if this was the last Pokemon of the route (before advancing turn)
-    $isLastPokemon = false;
+    // Check if this catch will complete the route (all players done after this turn)
+    $isLastTurn = false;
     if ($caught) {
-        $newEncountersRemaining = $room['encounters_remaining'] - 1;
-        if ($newEncountersRemaining <= 0) {
-            $isLastPokemon = true;
-        } else {
-            // Check if there are more unique Pokemon to spawn
-            $stmt = $db->prepare("SELECT id FROM routes WHERE route_number = ?");
-            $stmt->execute([$room['current_route']]);
-            $route = $stmt->fetch();
-            
-            if ($route) {
-                $stmt = $db->prepare("SELECT DISTINCT pokemon_id FROM wild_pokemon WHERE room_id = ?");
-                $stmt->execute([$roomId]);
-                $encounteredIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
-                
-                if (count($encounteredIds) > 0) {
-                    $placeholders = implode(',', array_fill(0, count($encounteredIds), '?'));
-                    $params = array_merge([$route['id']], $encounteredIds);
-                    $stmt = $db->prepare("
-                        SELECT COUNT(*) as count FROM route_pokemon rp
-                        JOIN pokemon_dex pd ON rp.pokemon_id = pd.id
-                        WHERE rp.route_id = ? AND pd.id NOT IN ($placeholders)
-                    ");
-                    $stmt->execute($params);
-                    $remaining = $stmt->fetch()['count'];
-                    if ($remaining <= 0) {
-                        $isLastPokemon = true;
-                    }
-                }
+        // Check if, after incrementing this player's turns_taken, all players are done
+        $stmt = $db->prepare("SELECT player_number, turns_taken FROM players WHERE room_id = ?");
+        $stmt->execute([$roomId]);
+        $allPlayers = $stmt->fetchAll();
+        $allDoneAfter = true;
+        foreach ($allPlayers as $p) {
+            $turnsAfter = $p['turns_taken'];
+            if ($p['player_number'] == $player['player_number']) {
+                $turnsAfter += 1; // This turn hasn't been counted yet
+            }
+            if ($turnsAfter < TURNS_PER_PLAYER) {
+                $allDoneAfter = false;
+                break;
             }
         }
+        $isLastTurn = $allDoneAfter;
     }
-    $result['is_last_pokemon'] = $isLastPokemon;
+    $result['is_last_pokemon'] = $isLastTurn;
     
     // Advance turn - encounter ends only if Pokemon was caught
     advanceTurn($db, $roomId, $room, $caught);
@@ -404,11 +435,12 @@ function attemptCatch() {
         'player_name' => $player['player_name'],
         'pokemon_name' => $wildPokemon['name'],
         'catch_roll' => $catchRoll,
+        'dice_roll' => $catchRoll,  // Alias for frontend compatibility
         'catch_rate' => $catchRate,
         'used_ultra_ball' => $useUltraBall,
         'caught' => $caught,
         'team_full' => $result['team_full'] ?? false,
-        'is_last_pokemon' => $isLastPokemon
+        'is_last_pokemon' => $isLastTurn
     ]);
     
     jsonResponse([
@@ -631,40 +663,42 @@ function setActivePokemon() {
 
 /**
  * Advance to next player's turn
+ * Each action (catch or attack) consumes the current player's turn.
+ * When an encounter ends (Pokemon caught or defeated), a new wild Pokemon spawns.
+ * The route ends when ALL players have used their 8 turns.
+ * 
  * @param bool $encounterEnded - true if the wild Pokemon was caught or defeated
  */
 function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
-    // Get player count
-    $stmt = $db->prepare("SELECT COUNT(*) as count FROM players WHERE room_id = ?");
+    // Get all players ordered by player_number
+    $stmt = $db->prepare("SELECT id, player_number, turns_taken FROM players WHERE room_id = ? ORDER BY player_number");
     $stmt->execute([$roomId]);
-    $playerCount = $stmt->fetch()['count'];
+    $players = $stmt->fetchAll();
+    $playerCount = count($players);
     
-    // Only decrement encounters when an encounter ends (Pokemon caught or defeated)
-    $encountersRemaining = $room['encounters_remaining'];
-    if ($encounterEnded) {
-        $encountersRemaining = $room['encounters_remaining'] - 1;
-    }
+    if ($playerCount === 0) return;
     
-    // Check if we should end the catching phase
-    $shouldEndPhase = false;
+    // Increment turns_taken for the current player (every action = 1 turn used)
+    $currentTurnNumber = $room['current_player_turn'];
+    $stmt = $db->prepare("UPDATE players SET turns_taken = turns_taken + 1 WHERE room_id = ? AND player_number = ?");
+    $stmt->execute([$roomId, $currentTurnNumber]);
     
-    if ($encountersRemaining <= 0 && $encounterEnded) {
-        // Normal end: all encounters completed
-        $shouldEndPhase = true;
-    } elseif ($encounterEnded && $encountersRemaining > 0) {
-        // Try to spawn a new Pokemon - if we can't, all unique Pokemon have been encountered
-        $spawned = spawnWildPokemonForRoom($db, $roomId);
-        if (!$spawned) {
-            // No more unique Pokemon available - end phase early
-            $shouldEndPhase = true;
-            addGameEvent($roomId, 'route_cleared', [
-                'message' => 'All Pokémon on this route have been encountered!'
-            ]);
+    // Refresh player data after increment
+    $stmt = $db->prepare("SELECT id, player_number, turns_taken FROM players WHERE room_id = ? ORDER BY player_number");
+    $stmt->execute([$roomId]);
+    $players = $stmt->fetchAll();
+    
+    // Check if ALL players have reached TURNS_PER_PLAYER
+    $allDone = true;
+    foreach ($players as $p) {
+        if ($p['turns_taken'] < TURNS_PER_PLAYER) {
+            $allDone = false;
+            break;
         }
     }
     
-    if ($shouldEndPhase) {
-        // Catching phase complete, move to town
+    if ($allDone) {
+        // All players have used all their turns — end catching phase, move to town
         $stmt = $db->prepare("
             UPDATE rooms 
             SET game_state = 'town', 
@@ -674,9 +708,9 @@ function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
         ");
         $stmt->execute([$roomId]);
         
-        // Give all players R$3 for entering town
-        $stmt = $db->prepare("UPDATE players SET money = money + 3 WHERE room_id = ?");
-        $stmt->execute([$roomId]);
+        // Give all players town income
+        $stmt = $db->prepare("UPDATE players SET money = money + ? WHERE room_id = ?");
+        $stmt->execute([TOWN_INCOME, $roomId]);
         
         // Clear wild pokemon
         $stmt = $db->prepare("DELETE FROM wild_pokemon WHERE room_id = ?");
@@ -684,26 +718,57 @@ function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
         
         addGameEvent($roomId, 'phase_changed', [
             'new_phase' => 'town',
-            'message' => 'Welcome to Town! All players receive R$3.'
+            'message' => 'All turns played! Welcome to Town! All players receive R$' . TOWN_INCOME . '.'
         ]);
-    } else {
-        // Next player's turn
-        $nextTurn = ($room['current_player_turn'] + 1) % $playerCount;
-        
-        $stmt = $db->prepare("
-            UPDATE rooms 
-            SET current_player_turn = ?,
-                encounters_remaining = ?
-            WHERE id = ?
-        ");
-        $stmt->execute([$nextTurn, $encountersRemaining, $roomId]);
-        
-        addGameEvent($roomId, 'turn_changed', [
-            'player_turn' => $nextTurn,
-            'encounters_remaining' => $encountersRemaining,
-            'encounter_ended' => $encounterEnded
-        ]);
+        return;
     }
+    
+    // Find the next player who still has turns remaining
+    // Start searching from the next player in rotation
+    $nextTurn = ($currentTurnNumber + 1) % $playerCount;
+    for ($i = 0; $i < $playerCount; $i++) {
+        $candidateNumber = ($currentTurnNumber + 1 + $i) % $playerCount;
+        $candidate = null;
+        foreach ($players as $p) {
+            if ($p['player_number'] == $candidateNumber) {
+                $candidate = $p;
+                break;
+            }
+        }
+        if ($candidate && $candidate['turns_taken'] < TURNS_PER_PLAYER) {
+            $nextTurn = $candidateNumber;
+            break;
+        }
+    }
+    
+    // If the encounter ended (Pokemon caught or defeated), try to spawn a new wild Pokemon
+    if ($encounterEnded) {
+        $spawned = spawnWildPokemonForRoom($db, $roomId);
+        if (!$spawned) {
+            // No more unique Pokemon available — allow duplicates from route
+            // This shouldn't block progression since turns drive the phase, not encounters
+        }
+    }
+    
+    // Update room with next player's turn
+    $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ? WHERE id = ?");
+    $stmt->execute([$nextTurn, $roomId]);
+    
+    // Get current player's updated turns info for the event
+    $currentPlayerTurns = 0;
+    foreach ($players as $p) {
+        if ($p['player_number'] == $currentTurnNumber) {
+            $currentPlayerTurns = $p['turns_taken'];
+            break;
+        }
+    }
+    
+    addGameEvent($roomId, 'turn_changed', [
+        'player_turn' => $nextTurn,
+        'previous_player_turns_taken' => $currentPlayerTurns,
+        'turns_per_player' => TURNS_PER_PLAYER,
+        'encounter_ended' => $encounterEnded
+    ]);
 }
 
 /**
@@ -766,7 +831,20 @@ function spawnWildPokemonForRoom($db, $roomId) {
     $pokemon = $stmt->fetch();
     
     if (!$pokemon) {
-        // All Pokemon from this route have been encountered - no more unique Pokemon
+        // All unique Pokemon from this route have been encountered — allow duplicates
+        $stmt = $db->prepare("
+            SELECT pd.* FROM route_pokemon rp
+            JOIN pokemon_dex pd ON rp.pokemon_id = pd.id
+            WHERE rp.route_id = ?
+            ORDER BY RAND()
+            LIMIT 1
+        ");
+        $stmt->execute([$route['id']]);
+        $pokemon = $stmt->fetch();
+    }
+    
+    if (!$pokemon) {
+        // No Pokemon at all on this route (shouldn't happen)
         return false;
     }
     

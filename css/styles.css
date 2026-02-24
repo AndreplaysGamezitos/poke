@@ -1449,6 +1449,13 @@ body {
     font-size: 0.9rem;
 }
 
+.turns-badge {
+    font-size: 0.7rem;
+    margin-left: auto;
+    opacity: 0.8;
+    white-space: nowrap;
+}
+
 /* Player Team Grid */
 .player-team-grid {
     display: grid;

@@ -34,8 +34,8 @@ define('MAX_TEAM_SIZE', 6);
 define('TOTAL_ROUTES', 5);       // 5 merged routes
 define('EXP_TO_EVOLVE', 6);
 
-// Catch phase: 8 turns per player (round-robin, 8×N total)
-define('ENCOUNTERS_PER_PLAYER', 8);
+// Catch phase: each player gets 8 turns per route
+define('TURNS_PER_PLAYER', 8);
 
 // Town phase
 define('TOWN_INCOME', 3);
