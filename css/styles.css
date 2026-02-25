@@ -412,7 +412,50 @@ body {
 #initial-turn-indicator {
     font-size: 1.2rem;
     color: var(--text-secondary);
-    margin-bottom: var(--spacing-xl);
+    margin-bottom: var(--spacing-sm);
+}
+
+/* Initial Selection Countdown */
+.initial-countdown {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 18px;
+    border-radius: var(--radius-md);
+    font-weight: bold;
+    font-size: 1.3rem;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-primary);
+    margin-bottom: var(--spacing-lg);
+    transition: all 0.3s ease;
+}
+
+.initial-countdown-icon {
+    font-size: 1.1rem;
+}
+
+.initial-countdown-value {
+    font-size: 1.5rem;
+    min-width: 1.2em;
+    text-align: center;
+}
+
+.initial-countdown-unit {
+    font-size: 1rem;
+    opacity: 0.7;
+}
+
+.initial-countdown.timer-warning {
+    color: var(--warning);
+    background: rgba(251, 191, 36, 0.15);
+    animation: timerPulse 0.5s ease infinite;
+}
+
+.initial-countdown.timer-critical {
+    color: var(--danger);
+    background: rgba(239, 68, 68, 0.2);
+    animation: timerPulse 0.3s ease infinite;
+    font-size: 1.5rem;
 }
 
 .starter-pokemon-grid {

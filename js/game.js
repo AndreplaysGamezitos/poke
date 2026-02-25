@@ -38,7 +38,10 @@ const GameState = {
     townTimerSeconds: 0,
     // Polling/watchdog intervals
     selectionPollInterval: null,
-    gameStateWatchdogInterval: null
+    gameStateWatchdogInterval: null,
+    // Initial selection timer (deadline-based for tab-throttle resilience)
+    initialSelectionTimerInterval: null,
+    initialSelectionDeadline: null
 };
 
 // Avatar options (using emojis for simplicity, can be replaced with images)
@@ -312,11 +315,16 @@ function setupEventListeners() {
     // Keyboard shortcuts for catching phase
     document.addEventListener('keydown', handleCatchingKeyboard);
     
-    // Visibility change: immediately recalculate the selection timer
+    // Visibility change: immediately recalculate timers
     // when the tab regains focus (browsers throttle setInterval in bg tabs)
     document.addEventListener('visibilitychange', () => {
-        if (!document.hidden && BattleState.selectionDeadline) {
-            tickSelectionTimer();
+        if (!document.hidden) {
+            if (BattleState.selectionDeadline) {
+                tickSelectionTimer();
+            }
+            if (GameState.initialSelectionDeadline) {
+                tickInitialSelectionTimer();
+            }
         }
     });
     
@@ -1982,6 +1990,7 @@ function handleGameStateChange(newState) {
         case 'lobby':
             stopCatchingTimer();
             stopTownTimer();
+            stopInitialSelectionTimer();
             if (GameState.currentScreen !== 'lobby') {
                 switchScreen('lobby');
             }
@@ -1996,23 +2005,27 @@ function handleGameStateChange(newState) {
         case 'catching':
             stopSelectionPolling();
             stopTownTimer();
+            stopInitialSelectionTimer();
             switchScreen('catching');
             initCatchingPhase();
             break;
         case 'town':
             stopCatchingTimer();
+            stopInitialSelectionTimer();
             switchScreen('town');
             initTownPhase();
             break;
         case 'tournament':
             stopCatchingTimer();
             stopTownTimer();
+            stopInitialSelectionTimer();
             switchScreen('tournament');
             initTournamentPhase();
             break;
         case 'battle':
             stopCatchingTimer();
             stopTownTimer();
+            stopInitialSelectionTimer();
             switchScreen('battle');
             initBattlePhase();
             break;
@@ -2021,6 +2034,7 @@ function handleGameStateChange(newState) {
             stopGameStateWatchdog();
             stopCatchingTimer();
             stopTownTimer();
+            stopInitialSelectionTimer();
             switchScreen('victory');
             loadVictoryScreen();
             break;
@@ -2086,9 +2100,16 @@ function renderStarterSelection() {
     if (isMyTurn) {
         DOM.initialTurnIndicator.textContent = '🎯 Sua vez! Escolha seu Pokémon inicial!';
         DOM.initialTurnIndicator.style.color = '#4ade80';
-    } else if (currentPlayer) {
-        DOM.initialTurnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
-        DOM.initialTurnIndicator.style.color = '#fbbf24';
+        // Start the countdown timer only if it's not already running
+        if (!GameState.initialSelectionTimerInterval) {
+            startInitialSelectionTimer();
+        }
+    } else {
+        if (currentPlayer) {
+            DOM.initialTurnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
+            DOM.initialTurnIndicator.style.color = '#fbbf24';
+        }
+        stopInitialSelectionTimer();
     }
     
     // Render starter grid
@@ -2187,6 +2208,8 @@ function renderSelectedList(players) {
  * Select a starter Pokemon
  */
 async function selectStarter(pokemonId) {
+    // Stop the countdown immediately so we don't auto-select after clicking
+    stopInitialSelectionTimer();
     setLoading(true);
     
     try {
@@ -2378,6 +2401,103 @@ function stopCatchingTimer() {
         timerEl.classList.add('hidden');
         timerEl.classList.remove('timer-warning', 'timer-critical');
     }
+}
+
+// ============================================
+// INITIAL SELECTION TIMER (deadline-based)
+// ============================================
+
+/**
+ * Start a 10-second countdown for the initial Pokémon selection.
+ * Uses an absolute deadline so the timer stays accurate even when the
+ * browser throttles setInterval (e.g. when the tab is in the background).
+ */
+function startInitialSelectionTimer() {
+    stopInitialSelectionTimer();
+
+    GameState.initialSelectionDeadline = Date.now() + 10000; // 10 s from now
+
+    // Immediately render the first frame
+    tickInitialSelectionTimer();
+
+    // Tick every 250 ms for a responsive display
+    GameState.initialSelectionTimerInterval = setInterval(() => {
+        tickInitialSelectionTimer();
+    }, 250);
+}
+
+/**
+ * Single tick of the initial-selection timer – computes remaining time from deadline.
+ */
+function tickInitialSelectionTimer() {
+    if (!GameState.initialSelectionDeadline) return;
+
+    const remaining = Math.max(0, GameState.initialSelectionDeadline - Date.now());
+    const secondsLeft = Math.ceil(remaining / 1000);
+
+    // Update visual display
+    const timerEl = document.getElementById('initial-countdown');
+    const timerValueEl = document.getElementById('initial-timer-value');
+    if (timerEl && timerValueEl) {
+        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
+        timerValueEl.textContent = Math.max(0, secondsLeft);
+
+        if (secondsLeft <= 3) {
+            timerEl.classList.remove('timer-warning');
+            timerEl.classList.add('timer-critical');
+        } else if (secondsLeft <= 5) {
+            timerEl.classList.remove('timer-critical');
+            timerEl.classList.add('timer-warning');
+        } else {
+            timerEl.classList.remove('timer-warning', 'timer-critical');
+        }
+    }
+
+    if (remaining <= 0) {
+        stopInitialSelectionTimer();
+        autoSelectStarter();
+    }
+}
+
+/**
+ * Stop the initial-selection countdown timer and hide the display.
+ */
+function stopInitialSelectionTimer() {
+    if (GameState.initialSelectionTimerInterval) {
+        clearInterval(GameState.initialSelectionTimerInterval);
+        GameState.initialSelectionTimerInterval = null;
+    }
+    GameState.initialSelectionDeadline = null;
+
+    const timerEl = document.getElementById('initial-countdown');
+    if (timerEl) {
+        timerEl.classList.add('hidden');
+        timerEl.classList.remove('timer-warning', 'timer-critical');
+    }
+}
+
+/**
+ * Auto-select a random available starter when the timer expires.
+ */
+function autoSelectStarter() {
+    console.log('[Timer] Initial selection timer expired — auto-selecting starter');
+
+    const starters = GameState.starters || [];
+    const state = GameState.selectionState || {};
+    const players = state.players || [];
+
+    // Get already-chosen Pokémon IDs
+    const selectedPokemonIds = players
+        .filter(p => p.pokemon_id)
+        .map(p => parseInt(p.pokemon_id));
+
+    // Available starters = not yet selected
+    const available = starters.filter(s => !selectedPokemonIds.includes(s.id));
+    if (available.length === 0) return;
+
+    // Pick a random one
+    const pick = available[Math.floor(Math.random() * available.length)];
+    selectStarter(pick.id);
 }
 
 /**
