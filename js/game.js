@@ -65,7 +65,12 @@ const BattleState = {
     isNpcBattle: false,
     npcData: null,
     // Type matchup indicators for selection UI
-    typeMatchups: null
+    typeMatchups: null,
+    // Ranked mode fields
+    isRankedMode: false,
+    myMatchIndex: null,
+    bracketSummary: [],
+    rankedWaiting: false
 };
 
 // API Endpoints
@@ -906,7 +911,21 @@ function returnToMenu() {
         TournamentState.isTiebreaker = false;
         TournamentState.tiebreakerType = '';
         TournamentState.tiebreakerRound = 1;
+        // Ranked mode fields
+        TournamentState.gameMode = 'casual';
+        TournamentState.allBattlesStarted = false;
+        TournamentState.myMatchIndex = null;
+        stopRankedCountdown();
     }
+    
+    // Reset ranked BattleState fields
+    BattleState.isRankedMode = false;
+    BattleState.myMatchIndex = null;
+    BattleState.bracketSummary = [];
+    BattleState.rankedWaiting = false;
+    stopRankedBracketPolling();
+    hideRankedWaitingOverlay();
+    hideRankedBracketPanel();
     
     // Hide the floating leave button
     if (DOM.btnLeaveGame) {
@@ -1453,6 +1472,47 @@ function connectSSE() {
         refreshTournamentState();
     });
 
+    // Ranked Mode Events
+    GameState.eventSource.addEventListener('all_battles_started', (e) => {
+        const data = JSON.parse(e.data);
+        handleTournamentEvent('all_battles_started', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_all_battles_complete', (e) => {
+        const data = JSON.parse(e.data);
+        handleTournamentEvent('ranked_all_battles_complete', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_battle_attack', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('attack', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_battle_ended', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('battle_ended', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_pokemon_selected', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('pokemon_selected', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_combat_started', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('combat_started', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_pokemon_fainted', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('pokemon_fainted', data.data);
+    });
+    
+    GameState.eventSource.addEventListener('ranked_pokemon_sent', (e) => {
+        const data = JSON.parse(e.data);
+        handleRankedBattleEvent('pokemon_sent', data.data);
+    });
+
     // Battle Phase Events
     GameState.eventSource.addEventListener('battle_pokemon_selected', (e) => {
         const data = JSON.parse(e.data);
@@ -1762,6 +1822,39 @@ function handleWebSocketMessage(message) {
             
         case 'battle_ended':
             handleBattleEvent('battle_ended', eventData);
+            break;
+        
+        // Ranked Mode Events
+        case 'all_battles_started':
+            handleTournamentEvent('all_battles_started', eventData);
+            break;
+        
+        case 'ranked_all_battles_complete':
+            handleTournamentEvent('ranked_all_battles_complete', eventData);
+            break;
+        
+        case 'ranked_battle_attack':
+            handleRankedBattleEvent('attack', eventData);
+            break;
+        
+        case 'ranked_battle_ended':
+            handleRankedBattleEvent('battle_ended', eventData);
+            break;
+        
+        case 'ranked_pokemon_selected':
+            handleRankedBattleEvent('pokemon_selected', eventData);
+            break;
+        
+        case 'ranked_combat_started':
+            handleRankedBattleEvent('combat_started', eventData);
+            break;
+        
+        case 'ranked_pokemon_fainted':
+            handleRankedBattleEvent('pokemon_fainted', eventData);
+            break;
+        
+        case 'ranked_pokemon_sent':
+            handleRankedBattleEvent('pokemon_sent', eventData);
             break;
             
         case 'pong':
@@ -3757,7 +3850,13 @@ const TournamentState = {
     hostPlayerId: null,
     isTiebreaker: false,
     tiebreakerType: '',
-    tiebreakerRound: 1
+    tiebreakerRound: 1,
+    // Ranked mode fields
+    gameMode: 'casual',
+    rankedCountdownTimer: null,
+    rankedCountdownSeconds: 10,
+    allBattlesStarted: false,
+    myMatchIndex: null
 };
 
 /**
@@ -3766,11 +3865,22 @@ const TournamentState = {
 async function initTournamentPhase() {
     console.log('Initializing Tournament Phase...');
     
+    // Stop any existing ranked countdown
+    stopRankedCountdown();
+    
     // Load tournament state from server
     await refreshTournamentState();
     
     // Setup tournament event listeners
     setupTournamentListeners();
+    
+    // In ranked mode, auto-start the countdown for battles
+    if (TournamentState.gameMode === 'ranked' && !TournamentState.allBattlesStarted) {
+        const allComplete = TournamentState.brackets.every(b => b.status === 'completed');
+        if (!allComplete) {
+            startRankedCountdown();
+        }
+    }
 }
 
 /**
@@ -3828,6 +3938,8 @@ async function refreshTournamentState() {
         TournamentState.isTiebreaker = result.tournament.is_tiebreaker || false;
         TournamentState.tiebreakerType = result.tournament.tiebreaker_type || '';
         TournamentState.tiebreakerRound = result.tournament.round || 1;
+        TournamentState.gameMode = result.room.game_mode || GameState.gameMode || 'casual';
+        TournamentState.allBattlesStarted = result.tournament.all_battles_started || false;
         GameState.currentRoute = result.room.current_route;
         
         // Check if this player is in the current match
@@ -4028,6 +4140,8 @@ function renderCurrentMatchPanel() {
     
     if (!matchPanel || !completePanel) return;
     
+    const isRanked = TournamentState.gameMode === 'ranked';
+    
     // Check if tournament is complete
     const allMatchesComplete = TournamentState.brackets.every(b => b.status === 'completed');
     
@@ -4035,7 +4149,8 @@ function renderCurrentMatchPanel() {
     console.log('Host check:', {
         playerId: GameState.playerId,
         hostPlayerId: TournamentState.hostPlayerId,
-        areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId)
+        areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId),
+        isRanked: isRanked
     });
     
     const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
@@ -4044,26 +4159,47 @@ function renderCurrentMatchPanel() {
         matchPanel.classList.add('hidden');
         completePanel.classList.remove('hidden');
         
-        // Only host can advance to next route
-        const btnNextRoute = document.getElementById('btn-next-route');
-        const waitingMsg = document.getElementById('tournament-complete-waiting');
-        
-        if (btnNextRoute) {
-            if (isHost) {
-                btnNextRoute.classList.remove('hidden');
-            } else {
-                btnNextRoute.classList.add('hidden');
-            }
-        }
-        
-        // Show/hide waiting message for non-hosts
-        if (waitingMsg) {
-            if (isHost) {
-                waitingMsg.classList.add('hidden');
-            } else {
+        if (isRanked) {
+            // In ranked mode, auto-advance after a short delay
+            const btnNextRoute = document.getElementById('btn-next-route');
+            const waitingMsg = document.getElementById('tournament-complete-waiting');
+            if (btnNextRoute) btnNextRoute.classList.add('hidden');
+            if (waitingMsg) {
                 waitingMsg.classList.remove('hidden');
+                waitingMsg.textContent = 'Avançando automaticamente...';
+            }
+            // Auto-advance after 3 seconds
+            setTimeout(() => {
+                rankedCompleteTournament();
+            }, 3000);
+        } else {
+            // Casual mode: only host can advance
+            const btnNextRoute = document.getElementById('btn-next-route');
+            const waitingMsg = document.getElementById('tournament-complete-waiting');
+            
+            if (btnNextRoute) {
+                if (isHost) {
+                    btnNextRoute.classList.remove('hidden');
+                } else {
+                    btnNextRoute.classList.add('hidden');
+                }
+            }
+            
+            if (waitingMsg) {
+                if (isHost) {
+                    waitingMsg.classList.add('hidden');
+                } else {
+                    waitingMsg.classList.remove('hidden');
+                }
             }
         }
+        return;
+    }
+    
+    // In ranked mode, hide the current match panel (countdown handles everything)
+    if (isRanked) {
+        matchPanel.classList.add('hidden');
+        completePanel.classList.add('hidden');
         return;
     }
     
@@ -4105,7 +4241,7 @@ function renderCurrentMatchPanel() {
         <div class="match-player-badges">🎖️ ${player2.badges}</div>
     `;
     
-    // Show start button ONLY for host
+    // Show start button ONLY for host (casual mode only)
     if (btnStartBattle && matchWaiting) {
         if (isHost) {
             btnStartBattle.classList.remove('hidden');
@@ -4289,6 +4425,372 @@ function handleTournamentEvent(eventType, data) {
             showToast(winMessage, 'success');
             handleGameStateChange('finished');
             break;
+        
+        // Ranked mode events
+        case 'all_battles_started':
+            console.log('[Ranked] All battles started simultaneously');
+            stopRankedCountdown();
+            showToast('⚔️ Todas as batalhas começaram!', 'info');
+            handleGameStateChange('battle');
+            break;
+        
+        case 'ranked_all_battles_complete':
+            console.log('[Ranked] All battles complete');
+            // Transition back to tournament to show results and auto-advance
+            handleGameStateChange('tournament');
+            refreshTournamentState();
+            break;
+    }
+}
+
+// ============================================
+// RANKED TOURNAMENT HELPER FUNCTIONS
+// ============================================
+
+/**
+ * Start the 10-second countdown before all ranked battles begin
+ */
+function startRankedCountdown() {
+    stopRankedCountdown();
+    
+    TournamentState.rankedCountdownSeconds = 10;
+    
+    const countdownEl = document.getElementById('ranked-tournament-countdown');
+    const countdownValue = document.getElementById('ranked-countdown-value');
+    if (!countdownEl || !countdownValue) return;
+    
+    countdownEl.classList.remove('hidden');
+    countdownValue.textContent = TournamentState.rankedCountdownSeconds;
+    
+    TournamentState.rankedCountdownTimer = setInterval(async () => {
+        TournamentState.rankedCountdownSeconds--;
+        countdownValue.textContent = Math.max(0, TournamentState.rankedCountdownSeconds);
+        
+        if (TournamentState.rankedCountdownSeconds <= 0) {
+            stopRankedCountdown();
+            console.log('[Ranked] Countdown finished — starting all battles');
+            // Only one player needs to trigger the start (use host as tie-breaker)
+            const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
+            if (isHost) {
+                await startAllRankedBattles();
+            }
+        }
+    }, 1000);
+}
+
+/**
+ * Stop the ranked countdown timer
+ */
+function stopRankedCountdown() {
+    if (TournamentState.rankedCountdownTimer) {
+        clearInterval(TournamentState.rankedCountdownTimer);
+        TournamentState.rankedCountdownTimer = null;
+    }
+    const countdownEl = document.getElementById('ranked-tournament-countdown');
+    if (countdownEl) countdownEl.classList.add('hidden');
+}
+
+/**
+ * Start all ranked battles simultaneously (called by host after countdown)
+ */
+async function startAllRankedBattles() {
+    try {
+        const result = await apiCall('api/tournament.php', {
+            action: 'start_all_matches',
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId
+        });
+        
+        if (result.success) {
+            if (result.already_started) {
+                console.log('[Ranked] Battles already started by another client');
+            } else {
+                console.log('[Ranked] All battles started successfully');
+            }
+        } else {
+            console.error('[Ranked] Failed to start all battles:', result.error);
+            showToast('Erro ao iniciar batalhas', 'error');
+        }
+    } catch (error) {
+        console.error('[Ranked] Error starting all battles:', error);
+    }
+}
+
+/**
+ * Auto-complete tournament in ranked mode (any player can call)
+ */
+async function rankedCompleteTournament() {
+    try {
+        const result = await apiCall('api/tournament.php', {
+            action: 'ranked_complete_tournament',
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId
+        });
+        
+        if (result.success) {
+            if (result.game_finished) {
+                showToast(`🏆 ${result.winner.name} venceu o jogo!`, 'success');
+            } else if (result.tiebreaker) {
+                showToast('🔥 DESEMPATE!', 'warning');
+            } else {
+                showToast(`Avançando para a Rota ${result.new_route}!`, 'success');
+            }
+        }
+    } catch (error) {
+        console.error('[Ranked] Error completing tournament:', error);
+    }
+}
+
+/**
+ * Render the ranked bracket side panel during battle
+ */
+function renderRankedBracketPanel(bracketSummary) {
+    const panel = document.getElementById('ranked-bracket-panel');
+    const list = document.getElementById('ranked-bracket-list');
+    if (!panel || !list) return;
+    
+    panel.classList.remove('hidden');
+    
+    // Add class to battle container for layout adjustment
+    const battleContainer = document.querySelector('.battle-container');
+    if (battleContainer) battleContainer.classList.add('has-ranked-panel');
+    
+    list.innerHTML = '';
+    
+    bracketSummary.forEach(bracket => {
+        const entry = document.createElement('div');
+        entry.className = 'ranked-bracket-entry';
+        
+        const isMyMatch = (bracket.player1?.id == GameState.playerId || bracket.player2?.id == GameState.playerId);
+        if (isMyMatch) entry.classList.add('is-my-match');
+        if (bracket.status === 'completed') entry.classList.add('completed');
+        
+        const p1Name = bracket.player1?.name || '???';
+        const p2Name = bracket.player2?.name || '???';
+        const p1Class = bracket.winner_id ? (bracket.winner_id == bracket.player1?.id ? 'winner' : 'loser') : '';
+        const p2Class = bracket.winner_id ? (bracket.winner_id == bracket.player2?.id ? 'winner' : 'loser') : '';
+        
+        let statusHtml = '';
+        if (bracket.status === 'completed') {
+            statusHtml = '<span class="bracket-entry-status completed">✅ Concluída</span>';
+        } else if (bracket.status === 'in_progress') {
+            statusHtml = '<span class="bracket-entry-status in-progress">⚔️ Em andamento</span>';
+        } else {
+            statusHtml = '<span class="bracket-entry-status">⏳ Pendente</span>';
+        }
+        
+        entry.innerHTML = `
+            <div class="bracket-entry-players">
+                <div class="bracket-entry-player ${p1Class}">${isMyMatch && bracket.player1?.id == GameState.playerId ? '👉 ' : ''}${p1Name}</div>
+                <div class="bracket-entry-vs">vs</div>
+                <div class="bracket-entry-player ${p2Class}">${isMyMatch && bracket.player2?.id == GameState.playerId ? '👉 ' : ''}${p2Name}</div>
+            </div>
+            ${statusHtml}
+        `;
+        
+        list.appendChild(entry);
+    });
+}
+
+/**
+ * Hide the ranked bracket side panel
+ */
+function hideRankedBracketPanel() {
+    const panel = document.getElementById('ranked-bracket-panel');
+    if (panel) panel.classList.add('hidden');
+    const battleContainer = document.querySelector('.battle-container');
+    if (battleContainer) battleContainer.classList.remove('has-ranked-panel');
+}
+
+/**
+ * Show the ranked waiting overlay (when your battle is done but others aren't)
+ */
+function showRankedWaitingOverlay(bracketSummary) {
+    const overlay = document.getElementById('ranked-waiting-overlay');
+    const bracketsContainer = document.getElementById('ranked-waiting-brackets');
+    if (!overlay || !bracketsContainer) return;
+    
+    overlay.classList.remove('hidden');
+    BattleState.rankedWaiting = true;
+    
+    // Render bracket status in the waiting overlay
+    bracketsContainer.innerHTML = '';
+    bracketSummary.forEach(bracket => {
+        const entry = document.createElement('div');
+        entry.className = 'ranked-bracket-entry';
+        if (bracket.status === 'completed') entry.classList.add('completed');
+        
+        const p1Name = bracket.player1?.name || '???';
+        const p2Name = bracket.player2?.name || '???';
+        const p1Class = bracket.winner_id ? (bracket.winner_id == bracket.player1?.id ? 'winner' : 'loser') : '';
+        const p2Class = bracket.winner_id ? (bracket.winner_id == bracket.player2?.id ? 'winner' : 'loser') : '';
+        
+        let statusText = bracket.status === 'completed' ? '✅' : '⚔️';
+        
+        entry.innerHTML = `
+            <div class="bracket-entry-players">
+                <div class="bracket-entry-player ${p1Class}">${p1Name}</div>
+                <div class="bracket-entry-vs">vs</div>
+                <div class="bracket-entry-player ${p2Class}">${p2Name}</div>
+            </div>
+            <div class="bracket-entry-status ${bracket.status === 'completed' ? 'completed' : 'in-progress'}">${statusText}</div>
+        `;
+        
+        bracketsContainer.appendChild(entry);
+    });
+}
+
+/**
+ * Hide the ranked waiting overlay
+ */
+function hideRankedWaitingOverlay() {
+    const overlay = document.getElementById('ranked-waiting-overlay');
+    if (overlay) overlay.classList.add('hidden');
+    BattleState.rankedWaiting = false;
+    stopRankedBracketPolling();
+}
+
+/**
+ * Handle ranked battle SSE/WS events.
+ * In ranked mode, all battles run simultaneously — each client receives events for ALL matches.
+ * This function filters by match_index so only events for THIS player's match update the battle UI.
+ * Events for OTHER matches update the bracket side panel.
+ */
+function handleRankedBattleEvent(eventType, data) {
+    console.log('[Ranked] Battle event:', eventType, 'match_index:', data.match_index, 'myMatch:', BattleState.myMatchIndex);
+    
+    const isMyMatch = (data.match_index === BattleState.myMatchIndex);
+    
+    // Always update bracket summary for side panel regardless of which match the event is for
+    updateRankedBracketFromEvent(eventType, data);
+    
+    // Only process battle UI updates for this player's match
+    if (!isMyMatch) {
+        console.log('[Ranked] Event for different match, skipping battle UI update');
+        return;
+    }
+    
+    // Delegate to the existing battle event handlers
+    switch (eventType) {
+        case 'pokemon_selected':
+            handlePokemonSelected(data);
+            break;
+        case 'combat_started':
+            handleCombatStarted(data);
+            break;
+        case 'attack':
+            handleAttackEvent(data);
+            break;
+        case 'pokemon_fainted':
+            handlePokemonFainted(data);
+            break;
+        case 'pokemon_sent':
+            handlePokemonSent(data);
+            break;
+        case 'battle_ended':
+            handleBattleEnded(data);
+            break;
+        default:
+            console.log('[Ranked] Unknown ranked battle event:', eventType);
+    }
+}
+
+/**
+ * Update the ranked bracket side panel from a live battle event.
+ * This keeps the bracket panel updated in real-time as other battles progress.
+ */
+function updateRankedBracketFromEvent(eventType, data) {
+    if (!BattleState.bracketSummary || !Array.isArray(BattleState.bracketSummary)) return;
+    
+    const matchIndex = data.match_index;
+    const bracket = BattleState.bracketSummary.find(b => b.match_index === matchIndex);
+    if (!bracket) return;
+    
+    switch (eventType) {
+        case 'combat_started':
+            bracket.status = 'in_progress';
+            break;
+        case 'battle_ended':
+            bracket.status = 'completed';
+            bracket.winner_id = data.winner_id;
+            break;
+    }
+    
+    // Re-render the bracket panel
+    renderRankedBracketPanel(BattleState.bracketSummary);
+    
+    // If we're in waiting state, update that overlay too
+    if (BattleState.rankedWaiting) {
+        showRankedWaitingOverlay(BattleState.bracketSummary);
+        
+        // Check if all matches are now complete
+        const allComplete = BattleState.bracketSummary.every(b => b.status === 'completed');
+        if (allComplete) {
+            console.log('[Ranked] All battles complete (from live event)');
+            hideRankedWaitingOverlay();
+            hideRankedBracketPanel();
+            setTimeout(() => {
+                handleGameStateChange('tournament');
+                refreshTournamentState();
+            }, 2000);
+        }
+    }
+}
+
+/**
+ * Start polling bracket status for ranked mode (when waiting for other battles)
+ */
+function startRankedBracketPolling() {
+    stopRankedBracketPolling();
+    BattleState._rankedPollInterval = setInterval(() => {
+        refreshRankedBracketStatus();
+    }, 3000);
+}
+
+/**
+ * Stop ranked bracket polling
+ */
+function stopRankedBracketPolling() {
+    if (BattleState._rankedPollInterval) {
+        clearInterval(BattleState._rankedPollInterval);
+        BattleState._rankedPollInterval = null;
+    }
+}
+
+/**
+ * Update the ranked bracket panel and waiting overlay with fresh data
+ */
+async function refreshRankedBracketStatus() {
+    if (!BattleState.isRankedMode) return;
+    
+    try {
+        const result = await apiCall(
+            `api/tournament.php?action=get_my_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
+            {}, 'GET'
+        );
+        
+        if (result.success && result.bracket_summary) {
+            BattleState.bracketSummary = result.bracket_summary;
+            renderRankedBracketPanel(result.bracket_summary);
+            
+            // If we're waiting, update the waiting overlay too
+            if (BattleState.rankedWaiting) {
+                showRankedWaitingOverlay(result.bracket_summary);
+            }
+            
+            // Check if all matches are complete
+            if (result.all_matches_complete) {
+                hideRankedWaitingOverlay();
+                hideRankedBracketPanel();
+                // Transition back to tournament
+                setTimeout(() => {
+                    handleGameStateChange('tournament');
+                    refreshTournamentState();
+                }, 2000);
+            }
+        }
+    } catch (error) {
+        console.debug('[Ranked] Error refreshing bracket status:', error);
     }
 }
 
@@ -4313,6 +4815,9 @@ async function initBattlePhase() {
         BattleState.autoTurnTimer = null;
     }
     
+    // Hide any ranked overlays from previous battles
+    hideRankedWaitingOverlay();
+    
     // Reset battle log display
     if (DOM.battleLogMessages) {
         DOM.battleLogMessages.innerHTML = '';
@@ -4320,15 +4825,31 @@ async function initBattlePhase() {
         console.error('DOM.battleLogMessages not found!');
     }
     
+    // Determine if this is ranked mode
+    const isRanked = GameState.gameMode === 'ranked' || TournamentState.gameMode === 'ranked';
+    BattleState.isRankedMode = isRanked;
+    
     // Fetch current battle state
     try {
-        console.log('Fetching battle state...');
-        const result = await apiCall(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
+        console.log('Fetching battle state... (ranked:', isRanked, ')');
+        
+        // In ranked mode, use get_my_battle_state to get this player's specific battle
+        const apiAction = isRanked ? 'get_my_battle_state' : 'get_battle_state';
+        const result = await apiCall(
+            `${API.tournament}?action=${apiAction}&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
+            {}, 'GET'
+        );
         
         console.log('Battle state result:', result);
         
         if (!result.success) {
             console.error('Battle state fetch failed:', result.error);
+            // In ranked mode, if no battle found, player might be waiting (bye)
+            if (isRanked && result.waiting) {
+                addBattleLog('Você não tem uma batalha nesta rodada. Aguardando...');
+                showRankedWaitingOverlay(BattleState.bracketSummary || []);
+                return;
+            }
             showToast(result.error || 'Falha ao carregar batalha', 'error');
             return;
         }
@@ -4338,6 +4859,17 @@ async function initBattlePhase() {
         // Store NPC battle info
         BattleState.isNpcBattle = result.is_npc_battle || battleState.is_npc_battle || false;
         BattleState.npcData = result.npc_data || battleState.npc_data || null;
+        
+        // In ranked mode, store the match index
+        if (isRanked) {
+            BattleState.myMatchIndex = result.match_index;
+            TournamentState.myMatchIndex = result.match_index;
+            BattleState.bracketSummary = result.bracket_summary || [];
+            // Show the bracket side panel
+            renderRankedBracketPanel(BattleState.bracketSummary);
+        } else {
+            hideRankedBracketPanel();
+        }
         
         // Determine if we are a participant (player1 is always human in NPC battles)
         BattleState.isMyBattle = (GameState.playerId == battleState.player1_id || 
@@ -4837,13 +5369,30 @@ async function selectBattlePokemon(teamIndex, isReplacement = false) {
     setLoading(true);
     
     try {
-        const action = isReplacement ? 'select_replacement' : 'select_pokemon';
-        const result = await apiCall(API.tournament, {
-            action: action,
-            room_code: GameState.roomCode,
-            player_id: GameState.playerId,
-            team_index: teamIndex
-        });
+        let action, data;
+        
+        if (BattleState.isRankedMode) {
+            // Ranked mode: use ranked-specific API with match_index
+            action = isReplacement ? 'ranked_select_replacement' : 'ranked_select_pokemon';
+            data = {
+                action: action,
+                room_code: GameState.roomCode,
+                player_id: GameState.playerId,
+                team_index: teamIndex,
+                match_index: BattleState.myMatchIndex
+            };
+        } else {
+            // Casual mode: use standard API
+            action = isReplacement ? 'select_replacement' : 'select_pokemon';
+            data = {
+                action: action,
+                room_code: GameState.roomCode,
+                player_id: GameState.playerId,
+                team_index: teamIndex
+            };
+        }
+        
+        const result = await apiCall(API.tournament, data);
         
         if (result.success) {
             showToast(result.message, 'success');
@@ -4911,10 +5460,24 @@ async function executeTurn() {
     if (BattleState.phase !== 'battle') return;
     
     try {
-        const result = await apiCall(API.tournament, {
-            action: 'execute_turn',
-            room_code: GameState.roomCode
-        });
+        let data;
+        
+        if (BattleState.isRankedMode) {
+            // Ranked mode: execute turn for specific match
+            data = {
+                action: 'execute_ranked_turn',
+                room_code: GameState.roomCode,
+                match_index: BattleState.myMatchIndex
+            };
+        } else {
+            // Casual mode: standard turn execution
+            data = {
+                action: 'execute_turn',
+                room_code: GameState.roomCode
+            };
+        }
+        
+        const result = await apiCall(API.tournament, data);
         
         if (result.success) {
             // The SSE events will handle UI updates
@@ -5276,7 +5839,9 @@ async function handlePokemonFainted(data) {
     if (data.player_id == GameState.playerId && data.needs_selection) {
         // Fetch fresh battle state to get type matchups for the replacement selection
         try {
-            const result = await apiCall(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
+            // Use ranked or casual API depending on mode
+            const apiAction = BattleState.isRankedMode ? 'get_my_battle_state' : 'get_battle_state';
+            const result = await apiCall(`${API.tournament}?action=${apiAction}&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
             if (result.success) {
                 BattleState.typeMatchups = result.type_matchups || null;
                 // Also update team HP values
@@ -5376,11 +5941,44 @@ function handleBattleEnded(data) {
     
     updateBattleStatus();
     
-    // After a delay, return to tournament screen
-    setTimeout(() => {
-        handleGameStateChange('tournament');
-        refreshTournamentState();
-    }, 3500);
+    // In ranked mode, show waiting overlay if other battles are still going
+    if (BattleState.isRankedMode) {
+        // Update bracket summary with this match's result
+        if (BattleState.bracketSummary) {
+            const myMatch = BattleState.bracketSummary.find(b => b.match_index === BattleState.myMatchIndex);
+            if (myMatch) {
+                myMatch.status = 'completed';
+                myMatch.winner_id = data.winner_id;
+            }
+            renderRankedBracketPanel(BattleState.bracketSummary);
+        }
+        
+        // Check if all matches are done
+        const allComplete = BattleState.bracketSummary?.every(b => b.status === 'completed');
+        
+        if (allComplete) {
+            // All done — go back to tournament
+            setTimeout(() => {
+                hideRankedBracketPanel();
+                hideRankedWaitingOverlay();
+                handleGameStateChange('tournament');
+                refreshTournamentState();
+            }, 3500);
+        } else {
+            // Show waiting overlay and start polling for updates
+            setTimeout(() => {
+                showRankedWaitingOverlay(BattleState.bracketSummary || []);
+                // Start polling for bracket updates
+                startRankedBracketPolling();
+            }, 2000);
+        }
+    } else {
+        // Casual mode: after a delay, return to tournament screen
+        setTimeout(() => {
+            handleGameStateChange('tournament');
+            refreshTournamentState();
+        }, 3500);
+    }
 }
 
 /**

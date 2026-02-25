@@ -461,6 +461,15 @@
                         <button class="btn btn-primary" id="btn-next-route">Continuar para a Próxima Rota</button>
                         <p class="match-waiting hidden" id="tournament-complete-waiting">Aguardando o host para continuar...</p>
                     </div>
+                    
+                    <!-- Ranked Mode: Auto-start countdown -->
+                    <div class="ranked-tournament-countdown hidden" id="ranked-tournament-countdown">
+                        <div class="ranked-countdown-content">
+                            <h3>⚔️ Batalhas começam em</h3>
+                            <div class="ranked-countdown-timer" id="ranked-countdown-value">10</div>
+                            <p>Prepare-se!</p>
+                        </div>
+                    </div>
                 </div>
                 
                 <!-- Players Standings -->
@@ -570,6 +579,26 @@
                 <div class="battle-log" id="battle-log">
                     <div class="battle-log-messages" id="battle-log-messages">
                         <!-- Battle messages will appear here -->
+                    </div>
+                </div>
+                
+                <!-- Ranked Mode: Bracket Side Panel -->
+                <div class="ranked-bracket-panel hidden" id="ranked-bracket-panel">
+                    <h4>⚔️ Batalhas</h4>
+                    <div class="ranked-bracket-list" id="ranked-bracket-list">
+                        <!-- Bracket entries rendered dynamically -->
+                    </div>
+                </div>
+                
+                <!-- Ranked Mode: Waiting for other battles overlay -->
+                <div class="ranked-waiting-overlay hidden" id="ranked-waiting-overlay">
+                    <div class="ranked-waiting-content">
+                        <div class="ranked-waiting-spinner">⏳</div>
+                        <h3>Sua batalha terminou!</h3>
+                        <p>Aguardando as outras batalhas terminarem...</p>
+                        <div class="ranked-waiting-brackets" id="ranked-waiting-brackets">
+                            <!-- Live bracket results shown here -->
+                        </div>
                     </div>
                 </div>
             </div>

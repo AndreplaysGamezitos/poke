@@ -659,7 +659,8 @@ switch ($action) {
                     'room_code' => $room['room_code'],
                     'game_state' => $room['game_state'],
                     'current_route' => $room['current_route'],
-                    'host_player_id' => $hostPlayerId
+                    'host_player_id' => $hostPlayerId,
+                    'game_mode' => $room['game_mode'] ?? 'casual'
                 ],
                 'tournament' => [
                     'brackets' => $enrichedBrackets,
@@ -669,7 +670,15 @@ switch ($action) {
                     'completed_matches' => $tournamentData['completed_matches'],
                     'total_matches' => $tournamentData['total_matches'],
                     'is_tiebreaker' => $tournamentData['is_tiebreaker'] ?? false,
-                    'tiebreaker_type' => $tournamentData['tiebreaker_type'] ?? ''
+                    'tiebreaker_type' => $tournamentData['tiebreaker_type'] ?? '',
+                    'all_battles_started' => $tournamentData['all_battles_started'] ?? false,
+                    'battle_states' => isset($tournamentData['battle_states']) ? array_map(function($bs) {
+                        return [
+                            'match_index' => $bs['match_index'],
+                            'phase' => $bs['phase'] ?? 'pending',
+                            'winner_id' => $bs['winner_id'] ?? null
+                        ];
+                    }, $tournamentData['battle_states']) : null
                 ],
                 'players' => array_map(function($p) {
                     return [
@@ -1896,6 +1905,857 @@ switch ($action) {
         ]);
         break;
         
+    case 'start_all_matches':
+        // RANKED MODE: Start ALL pending matches simultaneously
+        // Each match gets its own battle_state stored in battle_states array
+        $roomCode = $requestData['room_code'] ?? '';
+        $playerId = $requestData['player_id'] ?? '';
+        
+        if (!$roomCode) {
+            echo json_encode(['success' => false, 'error' => 'Room code required']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        // Verify ranked mode
+        if (($room['game_mode'] ?? 'casual') !== 'ranked') {
+            echo json_encode(['success' => false, 'error' => 'This action is only available in ranked mode']);
+            exit;
+        }
+        
+        $tournamentData = getTournamentState($pdo, $room['id']);
+        if (!$tournamentData) {
+            echo json_encode(['success' => false, 'error' => 'Tournament not initialized']);
+            exit;
+        }
+        
+        // Don't start again if already started
+        if (!empty($tournamentData['all_battles_started'])) {
+            echo json_encode(['success' => true, 'message' => 'Battles already started', 'already_started' => true]);
+            exit;
+        }
+        
+        $currentRoute = $tournamentData['current_route'] ?? $room['current_route'] ?? 1;
+        $battleStates = [];
+        $players = getPlayersInRoom($pdo, $room['id']);
+        
+        // Initialize battle state for every pending match
+        foreach ($tournamentData['brackets'] as &$bracket) {
+            if ($bracket['status'] !== 'pending') continue;
+            
+            $bracket['status'] = 'in_progress';
+            $matchIndex = $bracket['match_index'];
+            $player1Id = $bracket['player1_id'];
+            $player2Id = $bracket['player2_id'];
+            $isNpcBattle = isset($bracket['is_npc_battle']) && $bracket['is_npc_battle'];
+            
+            $player1Team = getPlayerTeam($pdo, $player1Id);
+            
+            if ($isNpcBattle) {
+                $bs = createGymLeaderBattleState($pdo, $player1Id, $player1Team, $currentRoute);
+                $bs['match_index'] = $matchIndex;
+                $npcSelectedIndex = npcSelectPokemon($bs);
+                if ($npcSelectedIndex !== null) {
+                    $bs['player2_active'] = $npcSelectedIndex;
+                }
+            } else {
+                $player2Team = getPlayerTeam($pdo, $player2Id);
+                $bs = [
+                    'match_index' => $matchIndex,
+                    'player1_id' => $player1Id,
+                    'player2_id' => $player2Id,
+                    'is_npc_battle' => false,
+                    'player1_team' => array_map(function($p) {
+                        $bonusHp = (int)($p['bonus_hp'] ?? 0);
+                        $bonusAtk = (int)($p['bonus_attack'] ?? 0);
+                        $bonusSpd = (int)($p['bonus_speed'] ?? 0);
+                        $battleHp = ceil($p['base_hp'] / 10 * 3) + $bonusHp;
+                        return [
+                            'team_id' => $p['team_id'], 'pokemon_id' => $p['pokemon_id'],
+                            'name' => $p['name'], 'type_defense' => $p['type_defense'],
+                            'type_attack' => $p['type_attack'], 'base_hp' => $p['base_hp'],
+                            'base_attack' => $p['base_attack'] + $bonusAtk,
+                            'base_speed' => $p['base_speed'] + $bonusSpd,
+                            'battle_hp' => $battleHp, 'current_hp' => $battleHp,
+                            'sprite_url' => $p['sprite_url'], 'is_fainted' => false,
+                            'bonus_hp' => $bonusHp, 'bonus_attack' => $bonusAtk, 'bonus_speed' => $bonusSpd
+                        ];
+                    }, $player1Team),
+                    'player2_team' => array_map(function($p) {
+                        $bonusHp = (int)($p['bonus_hp'] ?? 0);
+                        $bonusAtk = (int)($p['bonus_attack'] ?? 0);
+                        $bonusSpd = (int)($p['bonus_speed'] ?? 0);
+                        $battleHp = ceil($p['base_hp'] / 10 * 3) + $bonusHp;
+                        return [
+                            'team_id' => $p['team_id'], 'pokemon_id' => $p['pokemon_id'],
+                            'name' => $p['name'], 'type_defense' => $p['type_defense'],
+                            'type_attack' => $p['type_attack'], 'base_hp' => $p['base_hp'],
+                            'base_attack' => $p['base_attack'] + $bonusAtk,
+                            'base_speed' => $p['base_speed'] + $bonusSpd,
+                            'battle_hp' => $battleHp, 'current_hp' => $battleHp,
+                            'sprite_url' => $p['sprite_url'], 'is_fainted' => false,
+                            'bonus_hp' => $bonusHp, 'bonus_attack' => $bonusAtk, 'bonus_speed' => $bonusSpd
+                        ];
+                    }, $player2Team),
+                    'player1_active' => null,
+                    'player2_active' => null,
+                    'current_turn' => null,
+                    'phase' => 'selection',
+                    'turn_number' => 0,
+                    'battle_log' => []
+                ];
+            }
+            
+            $battleStates[$matchIndex] = $bs;
+        }
+        unset($bracket);
+        
+        $tournamentData['all_battles_started'] = true;
+        $tournamentData['battle_states'] = $battleStates;
+        
+        updateTournamentState($pdo, $room['id'], $tournamentData);
+        
+        // Transition room to battle phase
+        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'battle' WHERE id = ?");
+        $stmt->execute([$room['id']]);
+        
+        // Build broadcast data with all match info
+        $matchesInfo = [];
+        foreach ($tournamentData['brackets'] as $bracket) {
+            if ($bracket['status'] !== 'in_progress') continue;
+            $p1 = getPlayerById($pdo, $bracket['player1_id']);
+            $isNpc = isset($bracket['is_npc_battle']) && $bracket['is_npc_battle'];
+            $p2 = $isNpc ? null : getPlayerById($pdo, $bracket['player2_id']);
+            $matchInfo = [
+                'match_index' => $bracket['match_index'],
+                'is_npc_battle' => $isNpc,
+                'player1' => ['id' => $bracket['player1_id'], 'name' => $p1['player_name']],
+            ];
+            if ($isNpc) {
+                $gymLeader = getGymLeaderData($currentRoute);
+                $matchInfo['player2'] = [
+                    'id' => 'npc_gym_leader', 'name' => $gymLeader['name'],
+                    'title' => $gymLeader['title'], 'avatar' => $gymLeader['avatar'], 'is_npc' => true
+                ];
+            } else {
+                $matchInfo['player2'] = ['id' => $bracket['player2_id'], 'name' => $p2['player_name']];
+            }
+            $matchesInfo[] = $matchInfo;
+        }
+        
+        broadcastTournamentEvent($pdo, $room['id'], 'all_battles_started', [
+            'matches' => $matchesInfo,
+            'game_mode' => 'ranked'
+        ]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'All battles started simultaneously!',
+            'matches' => $matchesInfo
+        ]);
+        break;
+    
+    case 'get_my_battle_state':
+        // RANKED MODE: Get the battle state for the match this player is in
+        $roomCode = $_GET['room_code'] ?? $requestData['room_code'] ?? '';
+        $requestingPlayerId = $_GET['player_id'] ?? $requestData['player_id'] ?? '';
+        
+        if (!$roomCode || !$requestingPlayerId) {
+            echo json_encode(['success' => false, 'error' => 'Missing parameters']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        $tournamentData = getTournamentState($pdo, $room['id']);
+        if (!$tournamentData || !isset($tournamentData['battle_states'])) {
+            // Fallback to single battle_state for compatibility
+            if (isset($tournamentData['battle_state'])) {
+                // Redirect to get_battle_state
+                $battleState = $tournamentData['battle_state'];
+            } else {
+                echo json_encode(['success' => false, 'error' => 'No active battles']);
+                exit;
+            }
+        }
+        
+        // Find which match this player is in
+        $myBattleState = null;
+        $myMatchIndex = null;
+        if (isset($tournamentData['battle_states'])) {
+            foreach ($tournamentData['battle_states'] as $idx => $bs) {
+                if ($bs['player1_id'] == $requestingPlayerId || 
+                    (!isset($bs['is_npc_battle']) || !$bs['is_npc_battle']) && $bs['player2_id'] == $requestingPlayerId) {
+                    $myBattleState = $bs;
+                    $myMatchIndex = $idx;
+                    break;
+                }
+            }
+        }
+        
+        if (!$myBattleState) {
+            echo json_encode(['success' => false, 'error' => 'No battle found for this player', 'waiting' => true]);
+            exit;
+        }
+        
+        $isNpcBattle = isset($myBattleState['is_npc_battle']) && $myBattleState['is_npc_battle'];
+        $player1 = getPlayerById($pdo, $myBattleState['player1_id']);
+        $player2 = $isNpcBattle ? null : getPlayerById($pdo, $myBattleState['player2_id']);
+        
+        $isPlayer1 = ($requestingPlayerId == $myBattleState['player1_id']);
+        $isPlayer2 = ($requestingPlayerId == $myBattleState['player2_id']);
+        $bothSelected = ($myBattleState['player1_active'] !== null && $myBattleState['player2_active'] !== null);
+        
+        $responseBattleState = $myBattleState;
+        
+        if ($myBattleState['phase'] === 'selection' && !$bothSelected) {
+            if ($isPlayer1) {
+                $responseBattleState['player2_active'] = null;
+                $responseBattleState['player2_has_selected'] = ($myBattleState['player2_active'] !== null);
+            } else if ($isPlayer2) {
+                $responseBattleState['player1_active'] = null;
+                $responseBattleState['player1_has_selected'] = ($myBattleState['player1_active'] !== null);
+            }
+        }
+        
+        $player2Data = $isNpcBattle ? [
+            'id' => 'npc_gym_leader',
+            'name' => $myBattleState['npc_data']['name'] ?? 'Líder de Ginásio',
+            'title' => $myBattleState['npc_data']['title'] ?? '',
+            'avatar' => $myBattleState['npc_data']['avatar'] ?? '🏆',
+            'is_npc' => true
+        ] : [
+            'id' => $player2['id'],
+            'name' => $player2['player_name'],
+            'avatar' => $player2['avatar_id']
+        ];
+        
+        // Calculate type matchups
+        $typeMatchups = null;
+        $opponentActiveIndex = null;
+        $opponentPokemon = null;
+        $playerTeamKey = null;
+        
+        if ($isPlayer1) {
+            $opponentActiveIndex = $myBattleState['player2_active'];
+            if ($opponentActiveIndex !== null) $opponentPokemon = $myBattleState['player2_team'][$opponentActiveIndex];
+            $playerTeamKey = 'player1_team';
+        } else if ($isPlayer2) {
+            $opponentActiveIndex = $myBattleState['player1_active'];
+            if ($opponentActiveIndex !== null) $opponentPokemon = $myBattleState['player1_team'][$opponentActiveIndex];
+            $playerTeamKey = 'player2_team';
+        }
+        
+        if ($opponentPokemon !== null && $playerTeamKey !== null) {
+            $typeMatchups = [];
+            foreach ($responseBattleState[$playerTeamKey] as $index => $pokemon) {
+                if ($pokemon['is_fainted']) {
+                    $typeMatchups[$index] = ['defense_matchup' => 'neutral', 'attack_matchup' => 'neutral', 'overall' => 'fainted'];
+                    continue;
+                }
+                $defenseMultiplier = getTypeMultiplier($opponentPokemon['type_attack'], $pokemon['type_defense']);
+                $defenseMatchup = 'neutral';
+                if ($defenseMultiplier >= 2) $defenseMatchup = 'weak';
+                else if ($defenseMultiplier <= 0.5) $defenseMatchup = 'resist';
+                
+                $attackMultiplier = getTypeMultiplier($pokemon['type_attack'], $opponentPokemon['type_defense']);
+                $attackMatchup = 'neutral';
+                if ($attackMultiplier >= 2) $attackMatchup = 'super_effective';
+                else if ($attackMultiplier <= 0.5) $attackMatchup = 'resisted';
+                
+                $overall = 'neutral';
+                $good = 0; $bad = 0;
+                if ($defenseMatchup === 'resist') $good++;
+                if ($defenseMatchup === 'weak') $bad++;
+                if ($attackMatchup === 'super_effective') $good++;
+                if ($attackMatchup === 'resisted') $bad++;
+                if ($good > 0 && $bad === 0) $overall = 'advantage';
+                else if ($bad > 0 && $good === 0) $overall = 'disadvantage';
+                else if ($good > 0 && $bad > 0) $overall = 'mixed';
+                
+                $typeMatchups[$index] = [
+                    'defense_matchup' => $defenseMatchup, 'defense_multiplier' => $defenseMultiplier,
+                    'attack_matchup' => $attackMatchup, 'attack_multiplier' => $attackMultiplier,
+                    'overall' => $overall
+                ];
+            }
+        }
+        
+        // Also include bracket summary for the side panel
+        $bracketSummary = [];
+        foreach ($tournamentData['brackets'] as $bracket) {
+            $p1Info = null;
+            $p2Info = null;
+            $allPlayers = getPlayersInRoom($pdo, $room['id']);
+            foreach ($allPlayers as $p) {
+                if ($p['id'] == $bracket['player1_id']) $p1Info = $p;
+                if (isset($bracket['player2_id']) && $p['id'] == $bracket['player2_id']) $p2Info = $p;
+            }
+            $isNpc = isset($bracket['is_npc_battle']) && $bracket['is_npc_battle'];
+            $bracketSummary[] = [
+                'match_index' => $bracket['match_index'],
+                'status' => $bracket['status'],
+                'winner_id' => $bracket['winner_id'] ?? null,
+                'is_npc_battle' => $isNpc,
+                'player1' => $p1Info ? ['id' => $p1Info['id'], 'name' => $p1Info['player_name'], 'avatar_id' => $p1Info['avatar_id']] : null,
+                'player2' => $isNpc 
+                    ? ['id' => 'npc_gym_leader', 'name' => $bracket['npc_name'] ?? 'Líder', 'is_npc' => true]
+                    : ($p2Info ? ['id' => $p2Info['id'], 'name' => $p2Info['player_name'], 'avatar_id' => $p2Info['avatar_id']] : null)
+            ];
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'battle_state' => $responseBattleState,
+            'match_index' => $myMatchIndex,
+            'is_npc_battle' => $isNpcBattle,
+            'npc_data' => $isNpcBattle ? $myBattleState['npc_data'] : null,
+            'player1' => ['id' => $player1['id'], 'name' => $player1['player_name'], 'avatar' => $player1['avatar_id']],
+            'player2' => $player2Data,
+            'type_matchups' => $typeMatchups,
+            'bracket_summary' => $bracketSummary,
+            'all_matches_complete' => empty(array_filter($tournamentData['brackets'], function($b) { return $b['status'] !== 'completed'; }))
+        ]);
+        break;
+    
+    case 'execute_ranked_turn':
+        // RANKED MODE: Execute a turn for a specific match (identified by match_index)
+        $roomCode = $requestData['room_code'] ?? '';
+        $matchIndex = isset($requestData['match_index']) ? intval($requestData['match_index']) : null;
+        
+        if (!$roomCode || $matchIndex === null) {
+            echo json_encode(['success' => false, 'error' => 'Room code and match_index required']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        $tournamentData = getTournamentState($pdo, $room['id']);
+        if (!$tournamentData || !isset($tournamentData['battle_states'][$matchIndex])) {
+            echo json_encode(['success' => false, 'error' => 'Battle not found for match_index ' . $matchIndex]);
+            exit;
+        }
+        
+        $battleState = &$tournamentData['battle_states'][$matchIndex];
+        
+        if ($battleState['phase'] !== 'battle') {
+            echo json_encode(['success' => false, 'error' => 'Battle not in combat phase']);
+            exit;
+        }
+        
+        $isPlayer1Turn = ($battleState['current_turn'] === 'player1');
+        $isNpcBattle = isset($battleState['is_npc_battle']) && $battleState['is_npc_battle'];
+        
+        $attackerTeamKey = $isPlayer1Turn ? 'player1_team' : 'player2_team';
+        $defenderTeamKey = $isPlayer1Turn ? 'player2_team' : 'player1_team';
+        $attackerActiveKey = $isPlayer1Turn ? 'player1_active' : 'player2_active';
+        $defenderActiveKey = $isPlayer1Turn ? 'player2_active' : 'player1_active';
+        $attackerPlayerId = $isPlayer1Turn ? $battleState['player1_id'] : $battleState['player2_id'];
+        $defenderPlayerId = $isPlayer1Turn ? $battleState['player2_id'] : $battleState['player1_id'];
+        
+        $attackerIsNpc = $isNpcBattle && !$isPlayer1Turn;
+        $defenderIsNpc = $isNpcBattle && $isPlayer1Turn;
+        
+        $attacker = &$battleState[$attackerTeamKey][$battleState[$attackerActiveKey]];
+        $defender = &$battleState[$defenderTeamKey][$battleState[$defenderActiveKey]];
+        
+        $typeMultiplier = getTypeMultiplier($attacker['type_attack'], $defender['type_defense']);
+        $damage = ceil($attacker['base_attack'] * 0.1 * $typeMultiplier);
+        $damage = max(1, $damage);
+        
+        $defender['current_hp'] = max(0, $defender['current_hp'] - $damage);
+        $defenderFainted = ($defender['current_hp'] <= 0);
+        
+        if ($defenderFainted) {
+            $defender['is_fainted'] = true;
+        }
+        
+        $attackerPlayer = $attackerIsNpc ? null : getPlayerById($pdo, $attackerPlayerId);
+        $defenderPlayer = $defenderIsNpc ? null : getPlayerById($pdo, $defenderPlayerId);
+        $attackerName = $attackerIsNpc ? ($battleState['npc_data']['name'] ?? 'Líder de Ginásio') : $attackerPlayer['player_name'];
+        $defenderName = $defenderIsNpc ? ($battleState['npc_data']['name'] ?? 'Líder de Ginásio') : $defenderPlayer['player_name'];
+        
+        // Broadcast attack scoped to this match
+        broadcastTournamentEvent($pdo, $room['id'], 'ranked_battle_attack', [
+            'match_index' => $matchIndex,
+            'attacker_id' => $attackerPlayerId,
+            'attacker_name' => $attackerName,
+            'attacker_pokemon' => $attacker['name'],
+            'defender_pokemon' => $defender['name'],
+            'damage' => $damage,
+            'type_multiplier' => $typeMultiplier,
+            'defender_hp' => $defender['current_hp'],
+            'defender_max_hp' => $defender['battle_hp'],
+            'defender_fainted' => $defenderFainted,
+            'fainted' => $defenderFainted,
+            'is_player1_attacking' => $isPlayer1Turn,
+            'is_npc_battle' => $isNpcBattle,
+            'attacker_is_npc' => $attackerIsNpc,
+            'defender_is_npc' => $defenderIsNpc
+        ]);
+        
+        $battleEnded = false;
+        $needsSelection = false;
+        $winnerId = null;
+        $loserId = null;
+        
+        if ($defenderFainted) {
+            $defenderHasPokemon = false;
+            foreach ($battleState[$defenderTeamKey] as $pokemon) {
+                if (!$pokemon['is_fainted']) { $defenderHasPokemon = true; break; }
+            }
+            
+            if (!$defenderHasPokemon) {
+                $battleEnded = true;
+                $winnerId = $attackerPlayerId;
+                $loserId = $defenderPlayerId;
+                $battleState['phase'] = 'finished';
+                $battleState['winner_id'] = $winnerId;
+                
+                // Update bracket
+                foreach ($tournamentData['brackets'] as &$bracket) {
+                    if ($bracket['match_index'] === $matchIndex) {
+                        $bracket['winner_id'] = $winnerId;
+                        $bracket['status'] = 'completed';
+                        $tournamentData['completed_matches']++;
+                        break;
+                    }
+                }
+                unset($bracket);
+                
+                $isTiebreaker = isset($tournamentData['is_tiebreaker']) && $tournamentData['is_tiebreaker'];
+                
+                if ($isTiebreaker) {
+                    $tournamentData['eliminated_players'][] = $loserId;
+                } else {
+                    $winnerIsNpc = ($winnerId === 'npc_gym_leader');
+                    if (!$winnerIsNpc) {
+                        $stmt = $pdo->prepare("UPDATE players SET badges = badges + 1 WHERE id = ?");
+                        $stmt->execute([$winnerId]);
+                        $stmt = $pdo->prepare("UPDATE players SET money = money + 2 WHERE id = ?");
+                        $stmt->execute([$winnerId]);
+                    }
+                }
+                
+                $winnerIsNpc = ($winnerId === 'npc_gym_leader');
+                $loserIsNpc = ($loserId === 'npc_gym_leader');
+                $winnerName = $winnerIsNpc ? ($battleState['npc_data']['name'] ?? 'Líder') : getPlayerById($pdo, $winnerId)['player_name'];
+                $loserName = $loserIsNpc ? ($battleState['npc_data']['name'] ?? 'Líder') : getPlayerById($pdo, $loserId)['player_name'];
+                
+                $npcDialogue = null;
+                if ($isNpcBattle && isset($battleState['npc_data'])) {
+                    $npcDialogue = $winnerIsNpc ? $battleState['npc_data']['dialogue_lose'] : $battleState['npc_data']['dialogue_win'];
+                }
+                
+                broadcastTournamentEvent($pdo, $room['id'], 'ranked_battle_ended', [
+                    'match_index' => $matchIndex,
+                    'winner_id' => $winnerId,
+                    'winner_name' => $winnerName,
+                    'loser_id' => $loserId,
+                    'loser_name' => $loserName,
+                    'is_npc_battle' => $isNpcBattle,
+                    'winner_is_npc' => $winnerIsNpc,
+                    'npc_dialogue' => $npcDialogue
+                ]);
+                
+                // Check if ALL matches are now complete
+                $allComplete = true;
+                foreach ($tournamentData['brackets'] as $b) {
+                    if ($b['status'] !== 'completed') { $allComplete = false; break; }
+                }
+                
+                if ($allComplete) {
+                    // Transition back to tournament phase
+                    $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament' WHERE id = ?");
+                    $stmt->execute([$room['id']]);
+                    
+                    broadcastTournamentEvent($pdo, $room['id'], 'ranked_all_battles_complete', [
+                        'brackets' => $tournamentData['brackets']
+                    ]);
+                }
+                
+            } else {
+                $needsSelection = true;
+                $battleState[$defenderActiveKey] = null;
+                
+                if ($defenderIsNpc) {
+                    $npcNextPokemon = npcSelectPokemon($battleState);
+                    if ($npcNextPokemon !== null) {
+                        $battleState['player2_active'] = $npcNextPokemon;
+                        $newNpcPokemon = $battleState['player2_team'][$npcNextPokemon];
+                        $needsSelection = false;
+                        $battleState['phase'] = 'battle';
+                        
+                        $playerPokemon = $battleState['player1_team'][$battleState['player1_active']];
+                        if ($playerPokemon['base_speed'] >= $newNpcPokemon['base_speed']) {
+                            $battleState['current_turn'] = 'player1';
+                        } else {
+                            $battleState['current_turn'] = 'player2';
+                        }
+                        
+                        broadcastTournamentEvent($pdo, $room['id'], 'ranked_pokemon_sent', [
+                            'match_index' => $matchIndex,
+                            'player_id' => 'npc_gym_leader',
+                            'player_name' => $battleState['npc_data']['name'] ?? 'Líder',
+                            'pokemon_name' => $newNpcPokemon['name'],
+                            'pokemon_sprite' => $newNpcPokemon['sprite_url'],
+                            'is_player1' => false,
+                            'team_index' => $npcNextPokemon,
+                            'first_turn' => $battleState['current_turn'],
+                            'is_npc' => true
+                        ]);
+                    }
+                } else {
+                    $battleState['phase'] = 'selection';
+                    $battleState['waiting_for'] = $isPlayer1Turn ? 'player2' : 'player1';
+                    
+                    broadcastTournamentEvent($pdo, $room['id'], 'ranked_pokemon_fainted', [
+                        'match_index' => $matchIndex,
+                        'fainted_pokemon' => $defender['name'],
+                        'player_id' => $defenderPlayerId,
+                        'player_name' => $defenderName,
+                        'needs_selection' => true,
+                        'is_npc' => false
+                    ]);
+                }
+            }
+        } else {
+            $battleState['current_turn'] = $isPlayer1Turn ? 'player2' : 'player1';
+            $battleState['turn_number']++;
+        }
+        
+        updateTournamentState($pdo, $room['id'], $tournamentData);
+        
+        echo json_encode([
+            'success' => true,
+            'damage' => $damage,
+            'type_multiplier' => $typeMultiplier,
+            'defender_hp' => $defender['current_hp'],
+            'defender_fainted' => $defenderFainted,
+            'battle_ended' => $battleEnded,
+            'needs_selection' => $needsSelection,
+            'winner_id' => $winnerId,
+            'next_turn' => $battleState['current_turn'] ?? null,
+            'phase' => $battleState['phase']
+        ]);
+        break;
+    
+    case 'ranked_select_pokemon':
+        // RANKED MODE: Player selects Pokemon for their specific match
+        $roomCode = $requestData['room_code'] ?? '';
+        $playerId = $requestData['player_id'] ?? '';
+        $teamIndex = intval($requestData['team_index'] ?? 0);
+        $matchIndex = isset($requestData['match_index']) ? intval($requestData['match_index']) : null;
+        
+        if (!$roomCode || !$playerId || $matchIndex === null) {
+            echo json_encode(['success' => false, 'error' => 'Missing parameters']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        $tournamentData = getTournamentState($pdo, $room['id']);
+        if (!$tournamentData || !isset($tournamentData['battle_states'][$matchIndex])) {
+            echo json_encode(['success' => false, 'error' => 'Battle not found']);
+            exit;
+        }
+        
+        $battleState = &$tournamentData['battle_states'][$matchIndex];
+        
+        $isPlayer1 = ($playerId == $battleState['player1_id']);
+        $isPlayer2 = ($playerId == $battleState['player2_id']);
+        
+        if (!$isPlayer1 && !$isPlayer2) {
+            echo json_encode(['success' => false, 'error' => 'Not a participant']);
+            exit;
+        }
+        
+        $teamKey = $isPlayer1 ? 'player1_team' : 'player2_team';
+        $activeKey = $isPlayer1 ? 'player1_active' : 'player2_active';
+        
+        if ($teamIndex < 0 || $teamIndex >= count($battleState[$teamKey])) {
+            echo json_encode(['success' => false, 'error' => 'Invalid selection']);
+            exit;
+        }
+        
+        if ($battleState[$teamKey][$teamIndex]['is_fainted']) {
+            echo json_encode(['success' => false, 'error' => 'Cannot select fainted Pokemon']);
+            exit;
+        }
+        
+        $battleState[$activeKey] = $teamIndex;
+        $selectedPokemon = $battleState[$teamKey][$teamIndex];
+        $player = getPlayerById($pdo, $playerId);
+        
+        $bothSelected = ($battleState['player1_active'] !== null && $battleState['player2_active'] !== null);
+        $isNpcBattle = isset($battleState['is_npc_battle']) && $battleState['is_npc_battle'];
+        
+        $broadcastData = [
+            'match_index' => $matchIndex,
+            'player_id' => $playerId,
+            'player_name' => $player['player_name'],
+            'is_player1' => $isPlayer1,
+            'both_selected' => $bothSelected,
+            'is_npc_battle' => $isNpcBattle,
+            'pokemon_name' => $bothSelected ? $selectedPokemon['name'] : null,
+            'pokemon_sprite' => $bothSelected ? $selectedPokemon['sprite_url'] : null
+        ];
+        
+        if ($bothSelected) {
+            $p1Pokemon = $battleState['player1_team'][$battleState['player1_active']];
+            $p2Pokemon = $battleState['player2_team'][$battleState['player2_active']];
+            $broadcastData['player1_pokemon'] = $p1Pokemon['name'];
+            $broadcastData['player1_active'] = $battleState['player1_active'];
+            $broadcastData['player2_pokemon'] = $p2Pokemon['name'];
+            $broadcastData['player2_active'] = $battleState['player2_active'];
+        }
+        
+        broadcastTournamentEvent($pdo, $room['id'], 'ranked_pokemon_selected', $broadcastData);
+        
+        if ($bothSelected && $battleState['phase'] === 'selection') {
+            $battleState['phase'] = 'battle';
+            $battleState['turn_number'] = 1;
+            $p1Pokemon = $battleState['player1_team'][$battleState['player1_active']];
+            $p2Pokemon = $battleState['player2_team'][$battleState['player2_active']];
+            
+            if ($p1Pokemon['base_speed'] >= $p2Pokemon['base_speed']) {
+                $battleState['current_turn'] = 'player1';
+            } else {
+                $battleState['current_turn'] = 'player2';
+            }
+            
+            broadcastTournamentEvent($pdo, $room['id'], 'ranked_combat_started', [
+                'match_index' => $matchIndex,
+                'player1_pokemon' => $p1Pokemon['name'],
+                'player2_pokemon' => $p2Pokemon['name'],
+                'player1_active' => $battleState['player1_active'],
+                'player2_active' => $battleState['player2_active'],
+                'first_turn' => $battleState['current_turn']
+            ]);
+        }
+        
+        updateTournamentState($pdo, $room['id'], $tournamentData);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => "Selected {$selectedPokemon['name']}!",
+            'both_selected' => $bothSelected,
+            'battle_phase' => $battleState['phase']
+        ]);
+        break;
+    
+    case 'ranked_select_replacement':
+        // RANKED MODE: Select replacement Pokemon after fainting
+        $roomCode = $requestData['room_code'] ?? '';
+        $playerId = $requestData['player_id'] ?? '';
+        $teamIndex = intval($requestData['team_index'] ?? 0);
+        $matchIndex = isset($requestData['match_index']) ? intval($requestData['match_index']) : null;
+        
+        if (!$roomCode || !$playerId || $matchIndex === null) {
+            echo json_encode(['success' => false, 'error' => 'Missing parameters']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        $tournamentData = getTournamentState($pdo, $room['id']);
+        if (!$tournamentData || !isset($tournamentData['battle_states'][$matchIndex])) {
+            echo json_encode(['success' => false, 'error' => 'Battle not found']);
+            exit;
+        }
+        
+        $battleState = &$tournamentData['battle_states'][$matchIndex];
+        
+        $isPlayer1 = ($playerId == $battleState['player1_id']);
+        $isPlayer2 = ($playerId == $battleState['player2_id']);
+        
+        if (!$isPlayer1 && !$isPlayer2) {
+            echo json_encode(['success' => false, 'error' => 'Not a participant']);
+            exit;
+        }
+        
+        $teamKey = $isPlayer1 ? 'player1_team' : 'player2_team';
+        $activeKey = $isPlayer1 ? 'player1_active' : 'player2_active';
+        
+        if ($battleState[$activeKey] !== null) {
+            echo json_encode(['success' => false, 'error' => 'Already have active Pokemon']);
+            exit;
+        }
+        
+        if ($teamIndex < 0 || $teamIndex >= count($battleState[$teamKey]) || $battleState[$teamKey][$teamIndex]['is_fainted']) {
+            echo json_encode(['success' => false, 'error' => 'Invalid selection']);
+            exit;
+        }
+        
+        $battleState[$activeKey] = $teamIndex;
+        $newPokemon = $battleState[$teamKey][$teamIndex];
+        
+        $opponentActiveKey = $isPlayer1 ? 'player2_active' : 'player1_active';
+        $opponentTeamKey = $isPlayer1 ? 'player2_team' : 'player1_team';
+        $opponentPokemon = $battleState[$opponentTeamKey][$battleState[$opponentActiveKey]];
+        
+        if ($opponentPokemon['base_speed'] >= $newPokemon['base_speed']) {
+            $battleState['current_turn'] = $isPlayer1 ? 'player2' : 'player1';
+        } else {
+            $battleState['current_turn'] = $isPlayer1 ? 'player1' : 'player2';
+        }
+        
+        $battleState['phase'] = 'battle';
+        unset($battleState['waiting_for']);
+        
+        $player = getPlayerById($pdo, $playerId);
+        
+        broadcastTournamentEvent($pdo, $room['id'], 'ranked_pokemon_sent', [
+            'match_index' => $matchIndex,
+            'player_id' => $playerId,
+            'player_name' => $player['player_name'],
+            'pokemon_name' => $newPokemon['name'],
+            'pokemon_sprite' => $newPokemon['sprite_url'],
+            'is_player1' => $isPlayer1,
+            'team_index' => $teamIndex,
+            'first_turn' => $battleState['current_turn']
+        ]);
+        
+        updateTournamentState($pdo, $room['id'], $tournamentData);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => "Go, {$newPokemon['name']}!",
+            'phase' => 'battle',
+            'current_turn' => $battleState['current_turn']
+        ]);
+        break;
+    
+    case 'ranked_complete_tournament':
+        // RANKED MODE: Any player can trigger tournament completion (auto-advance)
+        $roomCode = $requestData['room_code'] ?? '';
+        $playerId = $requestData['player_id'] ?? '';
+        
+        if (!$roomCode) {
+            echo json_encode(['success' => false, 'error' => 'Room code required']);
+            exit;
+        }
+        
+        $room = getRoomByCode($pdo, $roomCode);
+        if (!$room) {
+            echo json_encode(['success' => false, 'error' => 'Room not found']);
+            exit;
+        }
+        
+        if (($room['game_mode'] ?? 'casual') !== 'ranked') {
+            echo json_encode(['success' => false, 'error' => 'Only available in ranked mode']);
+            exit;
+        }
+        
+        // Use the same completion logic as complete_tournament but without host check
+        $currentRoute = $room['current_route'];
+        $maxRoutes = 8;
+        $badgesToWin = 5;
+        
+        $players = getPlayersInRoom($pdo, $room['id']);
+        
+        $playersWithWinningBadges = [];
+        foreach ($players as $p) {
+            if ($p['badges'] >= $badgesToWin) {
+                $playersWithWinningBadges[] = $p;
+            }
+        }
+        
+        $isLastRoute = ($currentRoute >= $maxRoutes);
+        
+        if (count($playersWithWinningBadges) === 1) {
+            $winner = $playersWithWinningBadges[0];
+            $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'finished', game_data = ? WHERE id = ?");
+            $stmt->execute([json_encode(['winner_id' => $winner['id'], 'winner_name' => $winner['player_name'], 'win_type' => 'badges']), $room['id']]);
+            broadcastTournamentEvent($pdo, $room['id'], 'game_finished', [
+                'winner_id' => $winner['id'], 'winner_name' => $winner['player_name'],
+                'win_type' => 'badges', 'badges' => $winner['badges']
+            ]);
+            echo json_encode(['success' => true, 'game_finished' => true, 'winner' => ['id' => $winner['id'], 'name' => $winner['player_name'], 'badges' => $winner['badges']], 'win_type' => 'badges']);
+            exit;
+        } elseif (count($playersWithWinningBadges) > 1) {
+            $tiebreakerData = generateTiebreakerTournament($pdo, $room['id'], $playersWithWinningBadges, 'badges_tiebreaker');
+            broadcastTournamentEvent($pdo, $room['id'], 'tiebreaker_tournament', [
+                'reason' => 'badges_draw',
+                'players' => array_map(function($p) { return ['id' => $p['id'], 'name' => $p['player_name'], 'badges' => $p['badges']]; }, $playersWithWinningBadges)
+            ]);
+            echo json_encode(['success' => true, 'tiebreaker' => true, 'reason' => 'badges_draw']);
+            exit;
+        } elseif ($isLastRoute) {
+            usort($players, function($a, $b) { return $b['badges'] - $a['badges']; });
+            $maxBadges = $players[0]['badges'];
+            $playersWithMaxBadges = array_values(array_filter($players, function($p) use ($maxBadges) { return $p['badges'] === $maxBadges; }));
+            if (count($playersWithMaxBadges) === 1) {
+                $winner = $playersWithMaxBadges[0];
+                $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'finished', game_data = ? WHERE id = ?");
+                $stmt->execute([json_encode(['winner_id' => $winner['id'], 'winner_name' => $winner['player_name'], 'win_type' => 'most_badges']), $room['id']]);
+                broadcastTournamentEvent($pdo, $room['id'], 'game_finished', [
+                    'winner_id' => $winner['id'], 'winner_name' => $winner['player_name'],
+                    'win_type' => 'most_badges', 'badges' => $winner['badges']
+                ]);
+                echo json_encode(['success' => true, 'game_finished' => true, 'winner' => ['id' => $winner['id'], 'name' => $winner['player_name']], 'win_type' => 'most_badges']);
+                exit;
+            } else {
+                $tiebreakerData = generateTiebreakerTournament($pdo, $room['id'], $playersWithMaxBadges, 'final_tiebreaker');
+                broadcastTournamentEvent($pdo, $room['id'], 'tiebreaker_tournament', [
+                    'reason' => 'final_draw',
+                    'players' => array_map(function($p) { return ['id' => $p['id'], 'name' => $p['player_name'], 'badges' => $p['badges']]; }, $playersWithMaxBadges)
+                ]);
+                echo json_encode(['success' => true, 'tiebreaker' => true, 'reason' => 'final_draw']);
+                exit;
+            }
+        }
+        
+        $newRoute = $currentRoute + 1;
+        $randomFirstPlayer = rand(0, count($players) - 1);
+        $firstPlayer = null;
+        foreach ($players as $p) {
+            if ($p['player_number'] == $randomFirstPlayer) { $firstPlayer = $p; break; }
+        }
+        
+        $stmt = $pdo->prepare("UPDATE players SET is_ready = FALSE, turns_taken = 0 WHERE room_id = ?");
+        $stmt->execute([$room['id']]);
+        $stmt = $pdo->prepare("DELETE FROM wild_pokemon WHERE room_id = ?");
+        $stmt->execute([$room['id']]);
+        $stmt = $pdo->prepare("UPDATE players SET money = money + 3 WHERE room_id = ?");
+        $stmt->execute([$room['id']]);
+        
+        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'catching', current_route = ?, encounters_remaining = 0, current_player_turn = ?, game_data = NULL WHERE id = ?");
+        $stmt->execute([$newRoute, $randomFirstPlayer, $room['id']]);
+        
+        broadcastTournamentEvent($pdo, $room['id'], 'phase_changed', [
+            'new_phase' => 'catching', 'new_route' => $newRoute,
+            'first_player' => $randomFirstPlayer,
+            'first_player_name' => $firstPlayer ? $firstPlayer['player_name'] : 'Unknown'
+        ]);
+        
+        echo json_encode([
+            'success' => true, 'new_route' => $newRoute, 'new_phase' => 'catching',
+            'first_player' => $randomFirstPlayer
+        ]);
+        break;
+    
     default:
         echo json_encode(['success' => false, 'error' => 'Unknown action: ' . $action]);
         break;
