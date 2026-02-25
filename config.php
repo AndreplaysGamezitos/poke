@@ -54,15 +54,15 @@ define('TURN_TIMER_CASUAL', 0);     // No timer in casual
 define('PRICE_EVO_SODA', 1);
 define('PRICE_ULTRA_BALL', 3);
 define('PRICE_MEGA_STONE', 5);
-define('PRICE_HP_BOOST', 2);       // +3 HP bonus
-define('PRICE_ATTACK_BOOST', 2);   // +1 Attack bonus
-define('PRICE_SPEED_BOOST', 2);    // +3 Speed bonus
+define('PRICE_HP_BOOST', 2);       // +10 HP bonus
+define('PRICE_ATTACK_BOOST', 2);   // +10 Attack bonus
+define('PRICE_SPEED_BOOST', 2);    // +10 Speed bonus
 define('SELL_BASE_PRICE', 2);
 
 // Stat item bonus values
-define('HP_BOOST_VALUE', 3);       // +3 HP (applied to battle HP calc)
-define('ATTACK_BOOST_VALUE', 1);   // +1 Attack (applied to damage calc)
-define('SPEED_BOOST_VALUE', 3);    // +3 Speed (applied to speed comparison)
+define('HP_BOOST_VALUE', 10);      // +10 HP (applied to battle HP calc)
+define('ATTACK_BOOST_VALUE', 10);  // +10 Attack (applied to damage calc)
+define('SPEED_BOOST_VALUE', 10);   // +10 Speed (applied to speed comparison)
 
 // Catch mechanics (HP-based catch rates defined in pokemon_dex.catch_rate)
 // catch_rate is a percentage (15-40) stored per pokemon

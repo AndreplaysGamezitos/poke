@@ -70,7 +70,11 @@ const BattleState = {
     isRankedMode: false,
     myMatchIndex: null,
     bracketSummary: [],
-    rankedWaiting: false
+    rankedWaiting: false,
+    // Selection timer fields (deadline-based for tab-throttle resilience)
+    selectionTimerInterval: null,
+    selectionDeadline: null, // absolute deadline in ms (Date.now()-based)
+    selectionIsReplacement: false
 };
 
 // API Endpoints
@@ -245,6 +249,9 @@ function cacheDOM() {
         battleSelectionPanel: document.getElementById('battle-selection-panel'),
         battleSelectionTitle: document.getElementById('battle-selection-title'),
         battleSelectionGrid: document.getElementById('battle-selection-grid'),
+        selectionTimer: document.getElementById('selection-timer'),
+        timerProgress: document.getElementById('timer-progress'),
+        timerText: document.getElementById('timer-text'),
         battleLogMessages: document.getElementById('battle-log-messages'),
         battleP1Pokemon: document.getElementById('battle-p1-pokemon'),
         battleP2Pokemon: document.getElementById('battle-p2-pokemon'),
@@ -304,6 +311,14 @@ function setupEventListeners() {
     
     // Keyboard shortcuts for catching phase
     document.addEventListener('keydown', handleCatchingKeyboard);
+    
+    // Visibility change: immediately recalculate the selection timer
+    // when the tab regains focus (browsers throttle setInterval in bg tabs)
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && BattleState.selectionDeadline) {
+            tickSelectionTimer();
+        }
+    });
     
     // Enter key for forms
     DOM.roomCodeInput.addEventListener('keypress', (e) => {
@@ -882,6 +897,7 @@ function returnToMenu() {
         clearTimeout(BattleState.autoTurnTimer);
         BattleState.autoTurnTimer = null;
     }
+    stopSelectionTimer();
     BattleState.battleLog = [];
     
     // Reset TownState (if it exists)
@@ -3791,9 +3807,9 @@ function handleTownEvent(eventType, data) {
                 let itemName;
                 if (data.item === 'ultra_ball') itemName = 'Ultra Ball';
                 else if (data.item === 'evo_soda') itemName = 'Evo Soda';
-                else if (data.item === 'hp_boost') itemName = `HP Boost para ${data.pokemon_name}`;
-                else if (data.item === 'attack_boost') itemName = `Attack Boost para ${data.pokemon_name}`;
-                else if (data.item === 'speed_boost') itemName = `Speed Boost para ${data.pokemon_name}`;
+                else if (data.item === 'hp_boost') itemName = `HP Up para ${data.pokemon_name}`;
+                else if (data.item === 'attack_boost') itemName = `Protein para ${data.pokemon_name}`;
+                else if (data.item === 'speed_boost') itemName = `Carbos para ${data.pokemon_name}`;
                 else itemName = data.item;
                 addTownLogMessage(`${data.player_name} comprou ${itemName}`, 'info');
                 if (data.evolved) {
@@ -4904,7 +4920,7 @@ async function initBattlePhase() {
                 : BattleState.player2HasSelected;
             
             if (!myHasSelected) {
-                showPokemonSelectionPanel();
+                showPokemonSelectionPanel(false, battleState.selection_deadline || null);
             } else {
                 showWaitingForOpponent();
             }
@@ -5254,8 +5270,10 @@ function updateBattleStatus() {
 
 /**
  * Show Pokemon selection panel
+ * @param {boolean} isReplacement - Whether this is a replacement selection after a faint
+ * @param {number|null} serverDeadline - Unix timestamp from server for timer sync (optional)
  */
-function showPokemonSelectionPanel(isReplacement = false) {
+function showPokemonSelectionPanel(isReplacement = false, serverDeadline = null) {
     console.log('showPokemonSelectionPanel called', {
         isReplacement,
         hasPanel: !!DOM.battleSelectionPanel,
@@ -5339,12 +5357,16 @@ function showPokemonSelectionPanel(isReplacement = false) {
         
         DOM.battleSelectionGrid.appendChild(card);
     });
+    
+    // Start the 10-second countdown timer (sync with server deadline if available)
+    startSelectionTimer(isReplacement, serverDeadline);
 }
 
 /**
  * Hide Pokemon selection panel
  */
 function hidePokemonSelectionPanel() {
+    stopSelectionTimer();
     if (DOM.battleSelectionPanel) {
         DOM.battleSelectionPanel.classList.add('hidden');
     }
@@ -5354,6 +5376,7 @@ function hidePokemonSelectionPanel() {
  * Show waiting for opponent state
  */
 function showWaitingForOpponent() {
+    stopSelectionTimer();
     if (!DOM.battleSelectionPanel) return;
     
     DOM.battleSelectionPanel.classList.remove('hidden');
@@ -5363,9 +5386,120 @@ function showWaitingForOpponent() {
 }
 
 /**
+ * Start the 10-second selection countdown timer (deadline-based).
+ * Uses an absolute deadline so the timer stays accurate even when the
+ * browser throttles setInterval (e.g. when the tab is in the background).
+ * @param {boolean} isReplacement - Whether this is a replacement selection
+ * @param {number|null} serverDeadline - Unix timestamp (seconds) from server to sync with (optional)
+ */
+function startSelectionTimer(isReplacement = false, serverDeadline = null) {
+    stopSelectionTimer();
+
+    // Calculate absolute deadline in milliseconds
+    if (serverDeadline) {
+        BattleState.selectionDeadline = serverDeadline * 1000; // server sends seconds
+    } else {
+        BattleState.selectionDeadline = Date.now() + 10000; // 10 s from now
+    }
+    BattleState.selectionIsReplacement = isReplacement;
+
+    // Immediately render the first frame
+    tickSelectionTimer();
+
+    // Tick every 250 ms for a responsive display; the deadline math keeps it accurate
+    BattleState.selectionTimerInterval = setInterval(() => {
+        tickSelectionTimer();
+    }, 250);
+}
+
+/**
+ * Single tick of the selection timer – computes remaining time from deadline.
+ */
+function tickSelectionTimer() {
+    if (!BattleState.selectionDeadline) return;
+
+    const remaining = Math.max(0, BattleState.selectionDeadline - Date.now());
+    const secondsLeft = Math.ceil(remaining / 1000); // whole seconds shown to player
+
+    updateTimerDisplay(secondsLeft);
+
+    if (remaining <= 0) {
+        stopSelectionTimer();
+        autoSelectPokemon(BattleState.selectionIsReplacement);
+    }
+}
+
+/**
+ * Stop the selection countdown timer
+ */
+function stopSelectionTimer() {
+    if (BattleState.selectionTimerInterval) {
+        clearInterval(BattleState.selectionTimerInterval);
+        BattleState.selectionTimerInterval = null;
+    }
+    BattleState.selectionDeadline = null;
+}
+
+/**
+ * Update the visual timer display (circle + text)
+ * @param {number} timeLeft - seconds remaining (0–10)
+ */
+function updateTimerDisplay(timeLeft) {
+    if (!DOM.timerProgress || !DOM.timerText) return;
+    
+    const totalTime = 10;
+    const clamped = Math.max(0, Math.min(totalTime, timeLeft));
+    const circumference = 2 * Math.PI * 16; // r=16 from SVG
+    const offset = circumference * (1 - clamped / totalTime);
+    
+    DOM.timerProgress.style.strokeDashoffset = offset;
+    DOM.timerText.textContent = clamped;
+    
+    // Remove old classes
+    DOM.timerProgress.classList.remove('timer-warning', 'timer-danger');
+    DOM.timerText.classList.remove('timer-warning', 'timer-danger');
+    
+    // Apply warning/danger colors
+    if (timeLeft <= 3) {
+        DOM.timerProgress.classList.add('timer-danger');
+        DOM.timerText.classList.add('timer-danger');
+    } else if (timeLeft <= 5) {
+        DOM.timerProgress.classList.add('timer-warning');
+        DOM.timerText.classList.add('timer-warning');
+    }
+}
+
+/**
+ * Auto-select a random non-fainted Pokemon when timer expires
+ */
+function autoSelectPokemon(isReplacement) {
+    const myTeam = BattleState.amPlayer1 ? BattleState.player1Team : BattleState.player2Team;
+    
+    // Find all non-fainted Pokemon
+    const available = [];
+    myTeam.forEach((pokemon, index) => {
+        if (!pokemon.is_fainted) {
+            available.push(index);
+        }
+    });
+    
+    if (available.length === 0) return;
+    
+    // Pick a random one
+    const randomIndex = available[Math.floor(Math.random() * available.length)];
+    
+    addBattleLog('⏰ Tempo esgotado! Pokémon selecionado automaticamente.', 'info');
+    showToast('⏰ Tempo esgotado! Seleção automática.', 'warning');
+    
+    // Call the selection function
+    selectBattlePokemon(randomIndex, isReplacement);
+}
+
+/**
  * Select a Pokemon for battle
  */
 async function selectBattlePokemon(teamIndex, isReplacement = false) {
+    stopSelectionTimer();
     setLoading(true);
     
     try {
@@ -5852,7 +5986,9 @@ async function handlePokemonFainted(data) {
             console.error('Error fetching battle state for matchups:', error);
         }
         
-        showPokemonSelectionPanel(true);
+        // Use server deadline from the fainted event or from fetched battle state
+        const deadline = data.selection_deadline || null;
+        showPokemonSelectionPanel(true, deadline);
         updateBattleStatus();
     }
     

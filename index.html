@@ -281,6 +281,9 @@
                 <!-- Town Header -->
                 <div class="town-header">
                     <h2>🏘️ Centro Pokémon</h2>
+                    <div class="countdown-timer town-timer hidden" id="town-countdown">
+                        ⏱️ Tempo restante: <span id="town-timer-value">60</span>s
+                    </div>
                     <div class="town-info">
                         <span class="player-money" id="town-player-money">R$ 0</span>
                         <span class="route-indicator" id="town-route-indicator">Rota 1/8</span>
@@ -342,8 +345,8 @@
                             <div class="shop-item shop-item-stat" id="shop-hp-boost">
                                 <div class="shop-item-icon">❤️</div>
                                 <div class="shop-item-info">
-                                    <span class="shop-item-name">HP Boost</span>
-                                    <span class="shop-item-desc">+3 HP para o Pokémon ativo</span>
+                                    <span class="shop-item-name">HP Up</span>
+                                    <span class="shop-item-desc">+10 HP para o Pokémon ativo</span>
                                 </div>
                                 <button class="btn btn-shop btn-stat-boost" id="btn-buy-hp-boost" data-price="2">
                                     R$ 2
@@ -352,8 +355,8 @@
                             <div class="shop-item shop-item-stat" id="shop-attack-boost">
                                 <div class="shop-item-icon">⚔️</div>
                                 <div class="shop-item-info">
-                                    <span class="shop-item-name">Attack Boost</span>
-                                    <span class="shop-item-desc">+1 Ataque para o Pokémon ativo</span>
+                                    <span class="shop-item-name">Protein</span>
+                                    <span class="shop-item-desc">+10 ATK para o Pokémon ativo</span>
                                 </div>
                                 <button class="btn btn-shop btn-stat-boost" id="btn-buy-attack-boost" data-price="2">
                                     R$ 2
@@ -362,8 +365,8 @@
                             <div class="shop-item shop-item-stat" id="shop-speed-boost">
                                 <div class="shop-item-icon">💨</div>
                                 <div class="shop-item-info">
-                                    <span class="shop-item-name">Speed Boost</span>
-                                    <span class="shop-item-desc">+3 Velocidade para o Pokémon ativo</span>
+                                    <span class="shop-item-name">Carbos</span>
+                                    <span class="shop-item-desc">+10 SPD para o Pokémon ativo</span>
                                 </div>
                                 <button class="btn btn-shop btn-stat-boost" id="btn-buy-speed-boost" data-price="2">
                                     R$ 2
@@ -390,9 +393,6 @@
                         Pronto para o Torneio
                     </button>
                     <p class="ready-status" id="town-ready-status">0/0 jogadores prontos</p>
-                    <div class="countdown-timer town-timer hidden" id="town-countdown">
-                        ⏱️ Tempo restante: <span id="town-timer-value">60</span>s
-                    </div>
                 </div>
 
                 <!-- Town Log -->
@@ -569,7 +569,18 @@
                 
                 <!-- Pokemon Selection Panel (shown during selection phase) -->
                 <div class="battle-selection-panel hidden" id="battle-selection-panel">
-                    <h3 id="battle-selection-title">Choose your Pokémon!</h3>
+                    <div class="battle-selection-header">
+                        <h3 id="battle-selection-title">Choose your Pokémon!</h3>
+                        <div class="selection-timer" id="selection-timer">
+                            <div class="selection-timer-circle">
+                                <svg viewBox="0 0 36 36">
+                                    <circle class="timer-bg" cx="18" cy="18" r="16" />
+                                    <circle class="timer-progress" id="timer-progress" cx="18" cy="18" r="16" />
+                                </svg>
+                                <span class="timer-text" id="timer-text">10</span>
+                            </div>
+                        </div>
+                    </div>
                     <div class="battle-selection-grid" id="battle-selection-grid">
                         <!-- Pokemon cards will be rendered here -->
                     </div>

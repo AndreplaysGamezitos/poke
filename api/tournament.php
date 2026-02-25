@@ -237,6 +237,7 @@ function createGymLeaderBattleState($pdo, $playerId, $playerTeam, $route) {
         'player2_active' => null,
         'current_turn' => null,
         'phase' => 'selection',
+        'selection_deadline' => time() + 10,
         'turn_number' => 0,
         'battle_log' => []
     ];
@@ -840,6 +841,7 @@ switch ($action) {
                 'player2_active' => null,
                 'current_turn' => null, // Will be determined by speed
                 'phase' => 'selection', // selection, battle, finished
+                'selection_deadline' => time() + 10, // 10 seconds to select
                 'turn_number' => 0,
                 'battle_log' => []
             ];
@@ -861,6 +863,7 @@ switch ($action) {
         $broadcastData = [
             'match_index' => $matchIndex,
             'is_npc_battle' => $isNpcBattle,
+            'selection_deadline' => $battleState['selection_deadline'] ?? null,
             'player1' => [
                 'id' => $player1Id,
                 'name' => $player1['player_name']
@@ -1772,6 +1775,7 @@ switch ($action) {
                 } else {
                     // Human player needs to select
                     $battleState['phase'] = 'selection';
+                    $battleState['selection_deadline'] = time() + 10;
                     $battleState['waiting_for'] = $isPlayer1Turn ? 'player2' : 'player1';
                     
                     broadcastTournamentEvent($pdo, $room['id'], 'battle_pokemon_fainted', [
@@ -1779,6 +1783,7 @@ switch ($action) {
                         'player_id' => $defenderPlayerId,
                         'player_name' => $defenderName,
                         'needs_selection' => true,
+                        'selection_deadline' => $battleState['selection_deadline'],
                         'is_npc' => false
                     ]);
                 }
@@ -2006,6 +2011,7 @@ switch ($action) {
                     'player2_active' => null,
                     'current_turn' => null,
                     'phase' => 'selection',
+                    'selection_deadline' => time() + 10,
                     'turn_number' => 0,
                     'battle_log' => []
                 ];
@@ -2420,6 +2426,7 @@ switch ($action) {
                     }
                 } else {
                     $battleState['phase'] = 'selection';
+                    $battleState['selection_deadline'] = time() + 10;
                     $battleState['waiting_for'] = $isPlayer1Turn ? 'player2' : 'player1';
                     
                     broadcastTournamentEvent($pdo, $room['id'], 'ranked_pokemon_fainted', [
@@ -2428,6 +2435,7 @@ switch ($action) {
                         'player_id' => $defenderPlayerId,
                         'player_name' => $defenderName,
                         'needs_selection' => true,
+                        'selection_deadline' => $battleState['selection_deadline'],
                         'is_npc' => false
                     ]);
                 }

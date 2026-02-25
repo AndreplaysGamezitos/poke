@@ -766,9 +766,9 @@ function buyStatBoost($pdo, $statType) {
     
     // Validate stat type and get constants
     $statConfig = [
-        'hp' => ['price' => PRICE_HP_BOOST, 'value' => HP_BOOST_VALUE, 'column' => 'bonus_hp', 'name' => 'HP Boost', 'icon' => '❤️'],
-        'attack' => ['price' => PRICE_ATTACK_BOOST, 'value' => ATTACK_BOOST_VALUE, 'column' => 'bonus_attack', 'name' => 'Attack Boost', 'icon' => '⚔️'],
-        'speed' => ['price' => PRICE_SPEED_BOOST, 'value' => SPEED_BOOST_VALUE, 'column' => 'bonus_speed', 'name' => 'Speed Boost', 'icon' => '💨']
+        'hp' => ['price' => PRICE_HP_BOOST, 'value' => HP_BOOST_VALUE, 'column' => 'bonus_hp', 'name' => 'HP Up', 'icon' => '❤️'],
+        'attack' => ['price' => PRICE_ATTACK_BOOST, 'value' => ATTACK_BOOST_VALUE, 'column' => 'bonus_attack', 'name' => 'Protein', 'icon' => '⚔️'],
+        'speed' => ['price' => PRICE_SPEED_BOOST, 'value' => SPEED_BOOST_VALUE, 'column' => 'bonus_speed', 'name' => 'Carbos', 'icon' => '💨']
     ];
     
     if (!isset($statConfig[$statType])) {

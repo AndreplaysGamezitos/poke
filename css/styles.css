@@ -1299,12 +1299,13 @@ body {
 }
 
 .countdown-timer.town-timer {
-    display: block;
-    margin: 10px auto 0;
+    display: inline-block;
     text-align: center;
-    font-size: 1.1rem;
-    padding: 8px 16px;
-    max-width: 300px;
+    font-size: 1rem;
+    padding: 6px 14px;
+    margin: 0;
+    border-radius: var(--radius-md);
+    background: rgba(251, 191, 36, 0.1);
 }
 
 .countdown-timer.town-timer.timer-warning {
@@ -2196,27 +2197,29 @@ body {
 
 .town-shop-section h3 {
     color: var(--primary-yellow);
-    margin: 0 0 var(--spacing-lg) 0;
+    margin: 0 0 var(--spacing-sm) 0;
     font-size: 1.2rem;
-    padding-bottom: var(--spacing-sm);
+    padding-bottom: var(--spacing-xs);
     border-bottom: 2px solid var(--bg-light);
 }
 
 .shop-items {
-    display: flex;
-    flex-direction: column;
-    gap: var(--spacing-md);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--spacing-sm);
 }
 
 .shop-item {
     background: var(--bg-dark);
     border-radius: var(--radius-md);
-    padding: var(--spacing-md);
+    padding: var(--spacing-sm);
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: var(--spacing-md);
+    gap: var(--spacing-xs);
     border: 2px solid transparent;
     transition: all 0.2s ease;
+    text-align: center;
 }
 
 .shop-item:hover {
@@ -2224,8 +2227,8 @@ body {
 }
 
 .shop-item-icon {
-    font-size: 2rem;
-    width: 50px;
+    font-size: 1.5rem;
+    width: 40px;
     text-align: center;
 }
 
@@ -2233,28 +2236,31 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: var(--spacing-xs);
+    gap: 2px;
 }
 
 .shop-item-name {
     font-weight: 600;
     color: var(--text-primary);
+    font-size: 0.85rem;
 }
 
 .shop-item-desc {
-    font-size: 0.8rem;
+    font-size: 0.7rem;
     color: var(--text-secondary);
 }
 
 .btn-shop {
     background: var(--bg-light);
     color: var(--success);
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-xs) var(--spacing-sm);
     border: none;
     border-radius: var(--radius-md);
     font-weight: bold;
+    font-size: 0.8rem;
     cursor: pointer;
     transition: all 0.2s ease;
+    width: 100%;
 }
 
 .btn-shop:hover:not(:disabled) {
@@ -2286,7 +2292,8 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 2px;
-    padding: var(--spacing-sm) var(--spacing-md);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    font-size: 0.75rem;
 }
 
 .btn-mega:hover:not(:disabled) {
@@ -3166,10 +3173,90 @@ body {
     box-shadow: none;
 }
 
+.battle-selection-panel.waiting .selection-timer {
+    display: none;
+}
+
+.battle-selection-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-md);
+    position: relative;
+}
+
 .battle-selection-panel h3 {
     text-align: center;
     color: var(--primary-yellow);
-    margin-bottom: var(--spacing-md);
+    margin-bottom: 0;
+}
+
+/* Selection Timer */
+.selection-timer {
+    flex-shrink: 0;
+}
+
+.selection-timer-circle {
+    position: relative;
+    width: 48px;
+    height: 48px;
+}
+
+.selection-timer-circle svg {
+    width: 100%;
+    height: 100%;
+    transform: rotate(-90deg);
+}
+
+.selection-timer-circle .timer-bg {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.1);
+    stroke-width: 3;
+}
+
+.selection-timer-circle .timer-progress {
+    fill: none;
+    stroke: var(--primary-yellow);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 100.53;
+    stroke-dashoffset: 0;
+    transition: stroke-dashoffset 1s linear, stroke 0.3s ease;
+}
+
+.selection-timer-circle .timer-progress.timer-warning {
+    stroke: #ff9800;
+}
+
+.selection-timer-circle .timer-progress.timer-danger {
+    stroke: #f44336;
+    animation: timer-pulse 0.5s ease-in-out infinite;
+}
+
+@keyframes timer-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.timer-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--primary-yellow);
+    font-family: 'Pokemon Solid', sans-serif;
+    line-height: 1;
+}
+
+.timer-text.timer-warning {
+    color: #ff9800;
+}
+
+.timer-text.timer-danger {
+    color: #f44336;
 }
 
 .battle-selection-grid {
