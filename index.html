@@ -245,6 +245,7 @@
                     <div class="catching-actions" id="catching-actions">
                         <div class="turn-indicator" id="catching-turn-indicator">
                             <span id="current-turn-name">Aguardando...</span>'s turn
+                            <span class="countdown-timer hidden" id="catching-countdown">⏱️ <span id="catching-timer-value">5</span>s</span>
                         </div>
                         <div class="action-buttons hidden" id="player-action-buttons">
                             <button id="btn-catch" class="btn btn-catch" disabled>
@@ -389,6 +390,9 @@
                         Pronto para o Torneio
                     </button>
                     <p class="ready-status" id="town-ready-status">0/0 jogadores prontos</p>
+                    <div class="countdown-timer town-timer hidden" id="town-countdown">
+                        ⏱️ Tempo restante: <span id="town-timer-value">60</span>s
+                    </div>
                 </div>
 
                 <!-- Town Log -->

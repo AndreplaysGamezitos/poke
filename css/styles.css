@@ -1271,6 +1271,55 @@ body {
     font-weight: bold;
 }
 
+/* Countdown Timer */
+.countdown-timer {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 4px 12px;
+    border-radius: var(--radius-sm);
+    font-weight: bold;
+    font-size: 1rem;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    vertical-align: middle;
+}
+
+.countdown-timer.timer-warning {
+    color: var(--warning);
+    background: rgba(251, 191, 36, 0.15);
+    animation: timerPulse 0.5s ease infinite;
+}
+
+.countdown-timer.timer-critical {
+    color: var(--danger);
+    background: rgba(239, 68, 68, 0.2);
+    animation: timerPulse 0.3s ease infinite;
+    font-size: 1.1rem;
+}
+
+.countdown-timer.town-timer {
+    display: block;
+    margin: 10px auto 0;
+    text-align: center;
+    font-size: 1.1rem;
+    padding: 8px 16px;
+    max-width: 300px;
+}
+
+.countdown-timer.town-timer.timer-warning {
+    border: 1px solid var(--warning);
+}
+
+.countdown-timer.town-timer.timer-critical {
+    border: 1px solid var(--danger);
+}
+
+@keyframes timerPulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
 .action-buttons {
     display: flex;
     flex-direction: row;

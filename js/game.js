@@ -14,69 +14,69 @@ const GameState = {
     selectedAvatar: 1,
     players: [],
     gameState: 'lobby',
+    gameMode: 'casual', // 'casual' or 'ranked'
     eventSource: null,  // SSE fallback
     webSocket: null,    // WebSocket connection
     wsReconnectAttempts: 0,
     lastEventId: 0,
+    // Account state
+    account: null, // { id, nickname, code, avatar_id, elo, games_played, games_won }
+    // Ranked queue
+    rankedQueueInterval: null,
     // Catching phase state
     catchingState: null,
     wildPokemon: null,
     isMyTurn: false,
     currentRoute: 1,
-    encountersRemaining: 0,
-    catchAnimationInProgress: false
-};
-    isMyTurn: false,
-    currentRoute: 1,sing emojis for simplicity, can be replaced with images)
-    turnsPerPlayer: 8, '🐻‍❄️', '👻', '🐱', '🦊', '🐸', '😈', '🤖', '👽', '💩'];
+    turnsPerPlayer: 8,
     myTurnsTaken: 0,
-    catchAnimationInProgress: false,le)
-    // Timer state
-    catchTurnTimer: null,        // setInterval ID for catching turn countdown
-    catchTurnTimeLeft: 0,        // seconds remaining in current turn
-    townTimer: null,             // setInterval ID for town phase countdown  player1Team: [],
-    townTimeLeft: 0,             // seconds remaining in town phase    player2Team: [],
+    catchAnimationInProgress: false,
+    // Countdown timers
+    catchingTimerInterval: null,
+    catchingTimerSeconds: 0,
+    townTimerInterval: null,
+    townTimerSeconds: 0,
     // Polling/watchdog intervals
     selectionPollInterval: null,
-    gameStateWatchdogInterval: null    player1HasSelected: false,
+    gameStateWatchdogInterval: null
 };
-', // selection, battle, finished
-// Avatar options (using emojis for simplicity, can be replaced with images)ull,
+
+// Avatar options (using emojis for simplicity, can be replaced with images)
 const AVATARS = ['🙂', '🐻‍❄️', '👻', '🐱', '🦊', '🐸', '😈', '🤖', '👽', '💩'];
-e,
-// Battle State (tracks current battle),
+
+// Battle State (tracks current battle)
 const BattleState = {
     player1: null,
     player2: null,
     player1Team: [],
     player2Team: [],
-    player1Active: null,dicators for selection UI
-    player2Active: null,null
+    player1Active: null,
+    player2Active: null,
     player1HasSelected: false,
     player2HasSelected: false,
     phase: 'selection', // selection, battle, finished
     currentTurn: null,
-    turnNumber: 0,,
+    turnNumber: 0,
     isMyBattle: false,
-    amPlayer1: false,e.php',
+    amPlayer1: false,
     autoTurnTimer: null,
-    battleLog: [],ching.php',
-    // NPC Battle fields  town: 'api/town.php',
-    isNpcBattle: false,    tournament: 'api/tournament.php'
+    battleLog: [],
+    // NPC Battle fields
+    isNpcBattle: false,
     npcData: null,
     // Type matchup indicators for selection UI
-    typeMatchups: nulln
+    typeMatchups: null
 };
- your Node.js WebSocket server URL in production
-// API Endpointsws://localhost:3000'
-const API = {r-domain.com:3000' or via reverse proxy
-    room: 'api/room.php',3000',
-    sse: 'api/sse.php',ing SSE mode (works on shared hosting)
+
+// API Endpoints
+const API = {
+    room: 'api/room.php',
+    sse: 'api/sse.php',
     game: 'api/game.php',
     pokemon: 'api/pokemon.php',
     catching: 'api/catching.php',
     town: 'api/town.php',
-    tournament: 'api/tournament.php', load)
+    tournament: 'api/tournament.php',
     account: 'api/account.php',
     ranked: 'api/ranked.php'
 };
@@ -85,76 +85,76 @@ const API = {r-domain.com:3000' or via reverse proxy
 const WS_CONFIG = {
     // Change this URL to your Node.js WebSocket server URL in production
     // For local development: 'ws://localhost:3000'
-    // For production: 'wss://your-domain.com:3000' or via reverse proxy  setupAvatarSelectors();
-    url: 'wss://poke.labzts.fun/ws',    
-    enabled: true,       // ← CHANGE from false to truen
-    reconnectDelay: 3000,tingSession();
-    maxReconnectAttempts: 10}
+    // For production: 'wss://your-domain.com:3000' or via reverse proxy
+    url: 'wss://poke.labzts.fun/ws',
+    enabled: true,       // ← CHANGE from false to true
+    reconnectDelay: 3000,
+    maxReconnectAttempts: 10
 };
 
-// DOM Elements (cached on load)Cache frequently used DOM elements
+// DOM Elements (cached on load)
 let DOM = {};
-OM() {
+
 /**
  * Initialize the game
- */    screens: {
+ */
 async function init() {
-    cacheDOM();en-lobby'),
-    setupEventListeners();        initial: document.getElementById('screen-initial'),
+    cacheDOM();
+    setupEventListeners();
     setupAvatarSelectors();
     
-    // Check for saved account and restore backend session: document.getElementById('screen-tournament'),
-    const hasAccount = await loadSavedAccount();tElementById('screen-battle'),
-           victory: document.getElementById('screen-victory')
-    // Only check existing PHP session if no account was restored       },
-    // (restoreBackendSession already handles reconnection for logged-in users)        // Menu
-    if (!hasAccount) {     btnCreateRoom: document.getElementById('btn-create-room'),
-        checkExistingSession();entById('btn-join-room'),
-    }     createRoomForm: document.getElementById('create-room-form'),
-} document.getElementById('join-room-form'),
-atePlayerName: document.getElementById('create-player-name'),
-/**Name: document.getElementById('join-player-name'),
- * Cache frequently used DOM elementsput: document.getElementById('room-code-input'),
- */nfirm-create'),
-function cacheDOM() {l-create'),
-    DOM = {in'),
-        // Screens,
-        screens: {eate-avatar-selector'),
-            menu: document.getElementById('screen-menu'),ctor'),
+    // Check for saved account and restore backend session
+    const hasAccount = await loadSavedAccount();
+    
+    // Only check existing PHP session if no account was restored
+    // (restoreBackendSession already handles reconnection for logged-in users)
+    if (!hasAccount) {
+        checkExistingSession();
+    }
+}
+
+/**
+ * Cache frequently used DOM elements
+ */
+function cacheDOM() {
+    DOM = {
+        // Screens
+        screens: {
+            menu: document.getElementById('screen-menu'),
             lobby: document.getElementById('screen-lobby'),
-            initial: document.getElementById('screen-initial'),-code'),
-            catching: document.getElementById('screen-catching'),nCopyCode: document.getElementById('btn-copy-code'),
-            town: document.getElementById('screen-town'),t: document.getElementById('players-list'),
+            initial: document.getElementById('screen-initial'),
+            catching: document.getElementById('screen-catching'),
+            town: document.getElementById('screen-town'),
             tournament: document.getElementById('screen-tournament'),
             battle: document.getElementById('screen-battle'),
             victory: document.getElementById('screen-victory')
         },
         // Account
         accountSection: document.getElementById('account-section'),
-        loggedInSection: document.getElementById('logged-in-section'),l-turn-indicator'),
+        loggedInSection: document.getElementById('logged-in-section'),
         accountCreateView: document.getElementById('account-create-view'),
         accountLoginView: document.getElementById('account-login-view'),
         accountNicknameCreate: document.getElementById('account-nickname-create'),
-        accountNicknameLogin: document.getElementById('account-nickname-login'),emaining'),
+        accountNicknameLogin: document.getElementById('account-nickname-login'),
         accountCode: document.getElementById('account-code'),
-        btnAccountLogin: document.getElementById('btn-account-login'),lay'),
-        btnAccountCreate: document.getElementById('btn-account-create'),n-placeholder'),
+        btnAccountLogin: document.getElementById('btn-account-login'),
+        btnAccountCreate: document.getElementById('btn-account-create'),
         btnShowLogin: document.getElementById('btn-show-login'),
-        btnShowCreate: document.getElementById('btn-show-create'),n-name'),
-        btnAccountLogout: document.getElementById('btn-account-logout'),type-def'),
+        btnShowCreate: document.getElementById('btn-show-create'),
+        btnAccountLogout: document.getElementById('btn-account-logout'),
         menuAccountName: document.getElementById('menu-account-name'),
-        menuAccountElo: document.getElementById('menu-account-elo'),onAtk: document.getElementById('wild-pokemon-atk'),
+        menuAccountElo: document.getElementById('menu-account-elo'),
         menuAccountAvatar: document.getElementById('menu-account-avatar'),
         codeDisplay: document.getElementById('code-display'),
         btnToggleCode: document.getElementById('btn-toggle-code'),
-        accountAvatarSelector: document.getElementById('account-avatar-selector'),dicator'),
-        // Rankede'),
-        btnRankedQueue: document.getElementById('btn-ranked-queue'),ment.getElementById('btn-catch'),
+        accountAvatarSelector: document.getElementById('account-avatar-selector'),
+        // Ranked
+        btnRankedQueue: document.getElementById('btn-ranked-queue'),
         rankedQueuePanel: document.getElementById('ranked-queue-panel'),
         rankedQueueStatus: document.getElementById('ranked-queue-status'),
         rankedQueueCount: document.getElementById('ranked-queue-count'),
         btnLeaveQueue: document.getElementById('btn-leave-queue'),
-        // LeaderboardgPlayersPanel: document.getElementById('catching-players-panel'),
+        // Leaderboard
         btnLeaderboard: document.getElementById('btn-leaderboard'),
         leaderboardPanel: document.getElementById('leaderboard-panel'),
         leaderboardList: document.getElementById('leaderboard-list'),
@@ -164,34 +164,34 @@ function cacheDOM() {l-create'),
         btnJoinRoom: document.getElementById('btn-join-room'),
         createRoomForm: document.getElementById('create-room-form'),
         joinRoomForm: document.getElementById('join-room-form'),
-        createRoomPreviewName: document.getElementById('create-room-preview-name'),kemon-name'),
-        roomCodeInput: document.getElementById('room-code-input'),HpBar: document.getElementById('battle-p1-hp-bar'),
+        createRoomPreviewName: document.getElementById('create-room-preview-name'),
+        roomCodeInput: document.getElementById('room-code-input'),
         btnConfirmCreate: document.getElementById('btn-confirm-create'),
-        btnCancelCreate: document.getElementById('btn-cancel-create'),),
-        btnConfirmJoin: document.getElementById('btn-confirm-join'),ts'),
-        btnCancelJoin: document.getElementById('btn-cancel-join'),tack'),
-        // Lobby),
-        displayRoomCode: document.getElementById('display-room-code'),-atk'),
-        btnCopyCode: document.getElementById('btn-copy-code'),def'),
-        playersList: document.getElementById('players-list'),rite: document.getElementById('battle-p2-sprite'),
-        playerCount: document.getElementById('player-count'),p2-pokemon-name'),
+        btnCancelCreate: document.getElementById('btn-cancel-create'),
+        btnConfirmJoin: document.getElementById('btn-confirm-join'),
+        btnCancelJoin: document.getElementById('btn-cancel-join'),
+        // Lobby
+        displayRoomCode: document.getElementById('display-room-code'),
+        btnCopyCode: document.getElementById('btn-copy-code'),
+        playersList: document.getElementById('players-list'),
+        playerCount: document.getElementById('player-count'),
         btnStartGame: document.getElementById('btn-start-game'),
-        btnLeaveRoom: document.getElementById('btn-leave-room'),ext'),
-        hostIndicator: document.getElementById('host-indicator'),ument.getElementById('battle-p2-team'),
-        // Initial-stats'),
+        btnLeaveRoom: document.getElementById('btn-leave-room'),
+        hostIndicator: document.getElementById('host-indicator'),
+        // Initial
         starterGrid: document.getElementById('starter-grid'),
-        initialTurnIndicator: document.getElementById('initial-turn-indicator'),,
+        initialTurnIndicator: document.getElementById('initial-turn-indicator'),
         selectedList: document.getElementById('selected-list'),
         // Catching Phase
         routeName: document.getElementById('route-name'),
-        encountersRemaining: document.getElementById('encounters-remaining'),splay'),
+        encountersRemaining: document.getElementById('encounters-remaining'),
         routeProgress: document.getElementById('route-progress'),
-        wildPokemonDisplay: document.getElementById('wild-pokemon-display'),'),
-        wildPokemonPlaceholder: document.getElementById('wild-pokemon-placeholder'),ion-title'),
-        wildPokemonImg: document.getElementById('wild-pokemon-img'),on-grid'),
-        wildPokemonName: document.getElementById('wild-pokemon-name'),-log-messages'),
-        wildPokemonTypeDef: document.getElementById('wild-pokemon-type-def'),pokemon'),
-        wildPokemonTypeAtk: document.getElementById('wild-pokemon-type-atk'),n'),
+        wildPokemonDisplay: document.getElementById('wild-pokemon-display'),
+        wildPokemonPlaceholder: document.getElementById('wild-pokemon-placeholder'),
+        wildPokemonImg: document.getElementById('wild-pokemon-img'),
+        wildPokemonName: document.getElementById('wild-pokemon-name'),
+        wildPokemonTypeDef: document.getElementById('wild-pokemon-type-def'),
+        wildPokemonTypeAtk: document.getElementById('wild-pokemon-type-atk'),
         wildPokemonAtk: document.getElementById('wild-pokemon-atk'),
         wildPokemonSpd: document.getElementById('wild-pokemon-spd'),
         wildHpBar: document.getElementById('wild-hp-bar'),
@@ -201,14 +201,14 @@ function cacheDOM() {l-create'),
         catchingTurnIndicator: document.getElementById('catching-turn-indicator'),
         currentTurnName: document.getElementById('current-turn-name'),
         btnCatch: document.getElementById('btn-catch'),
-        btnUltraCatch: document.getElementById('btn-ultra-catch'),teners
+        btnUltraCatch: document.getElementById('btn-ultra-catch'),
         btnAttack: document.getElementById('btn-attack'),
         ultraBallCount: document.getElementById('ultra-ball-count'),
         catchingLogMessages: document.getElementById('catching-log-messages'),
-        catchingPlayersPanel: document.getElementById('catching-players-panel'),te'));
-        // Victoryin'));
-        winnerName: document.getElementById('winner-name'),eate'));
-        victoryMessage: document.getElementById('victory-message'),join'));
+        catchingPlayersPanel: document.getElementById('catching-players-panel'),
+        // Victory
+        winnerName: document.getElementById('winner-name'),
+        victoryMessage: document.getElementById('victory-message'),
         // Battle Screen
         battleP1Avatar: document.getElementById('battle-p1-avatar'),
         battleP1Name: document.getElementById('battle-p1-name'),
@@ -221,8 +221,8 @@ function cacheDOM() {l-create'),
         battleP1Team: document.getElementById('battle-p1-team'),
         battleP1Stats: document.getElementById('battle-p1-stats'),
         battleP1Attack: document.getElementById('battle-p1-attack'),
-        battleP1Speed: document.getElementById('battle-p1-speed'),e));
-        battleP1TypeAtk: document.getElementById('battle-p1-type-atk'),rue));
+        battleP1Speed: document.getElementById('battle-p1-speed'),
+        battleP1TypeAtk: document.getElementById('battle-p1-type-atk'),
         battleP1TypeDef: document.getElementById('battle-p1-type-def'),
         battleP2Sprite: document.getElementById('battle-p2-sprite'),
         battleP2PokemonName: document.getElementById('battle-p2-pokemon-name'),
@@ -243,14 +243,14 @@ function cacheDOM() {l-create'),
         battleLogMessages: document.getElementById('battle-log-messages'),
         battleP1Pokemon: document.getElementById('battle-p1-pokemon'),
         battleP2Pokemon: document.getElementById('battle-p2-pokemon'),
-        // Utilityon setupAvatarSelectors() {
-        toastContainer: document.getElementById('toast-container'),   [DOM.createAvatarSelector, DOM.joinAvatarSelector].forEach(selector => {
-        loadingOverlay: document.getElementById('loading-overlay'),        AVATARS.forEach((avatar, index) => {
-        // Floating Leave Button         const option = document.createElement('div');
-        btnLeaveGame: document.getElementById('btn-leave-game')Name = 'avatar-option' + (index === 0 ? ' selected' : '');
-    };         option.textContent = avatar;
-}rId = index + 1;
-EventListener('click', () => selectAvatar(option, selector));
+        // Utility
+        toastContainer: document.getElementById('toast-container'),
+        loadingOverlay: document.getElementById('loading-overlay'),
+        // Floating Leave Button
+        btnLeaveGame: document.getElementById('btn-leave-game')
+    };
+}
+
 /**
  * Setup event listeners
  */
@@ -260,8 +260,8 @@ function setupEventListeners() {
     DOM.btnAccountCreate?.addEventListener('click', createAccount);
     DOM.btnAccountLogout?.addEventListener('click', logoutAccount);
     DOM.btnShowLogin?.addEventListener('click', showLoginView);
-    DOM.btnShowCreate?.addEventListener('click', showCreateView);selector.querySelectorAll('.avatar-option').forEach(opt => opt.classList.remove('selected'));
-    t.add('selected');
+    DOM.btnShowCreate?.addEventListener('click', showCreateView);
+    
     // Code reveal toggle
     DOM.btnToggleCode?.addEventListener('click', toggleCodeReveal);
     DOM.codeDisplay?.addEventListener('click', toggleCodeReveal);
@@ -269,8 +269,8 @@ function setupEventListeners() {
     // Ranked queue
     DOM.btnRankedQueue?.addEventListener('click', joinRankedQueue);
     DOM.btnLeaveQueue?.addEventListener('click', leaveRankedQueue);
-    .createRoomForm.classList.add('hidden');
-    // LeaderboardDOM.joinRoomForm.classList.add('hidden');
+    
+    // Leaderboard
     DOM.btnLeaderboard?.addEventListener('click', showLeaderboard);
     DOM.btnCloseLeaderboard?.addEventListener('click', () => {
         DOM.leaderboardPanel?.classList.add('hidden');
@@ -278,7 +278,7 @@ function setupEventListeners() {
     
     // Menu buttons
     DOM.btnCreateRoom.addEventListener('click', () => showForm('create'));
-    DOM.btnJoinRoom.addEventListener('click', () => showForm('join'));}
+    DOM.btnJoinRoom.addEventListener('click', () => showForm('join'));
     DOM.btnCancelCreate.addEventListener('click', () => hideForm('create'));
     DOM.btnCancelJoin.addEventListener('click', () => hideForm('join'));
     DOM.btnConfirmCreate.addEventListener('click', createRoom);
@@ -286,7 +286,7 @@ function setupEventListeners() {
     
     // Lobby buttons
     DOM.btnCopyCode.addEventListener('click', copyRoomCode);
-    DOM.btnStartGame.addEventListener('click', startGame);    DOM.createRoomForm.classList.add('hidden');
+    DOM.btnStartGame.addEventListener('click', startGame);
     DOM.btnLeaveRoom.addEventListener('click', leaveRoom);
     
     // Floating leave game button (for leaving during any game phase)
@@ -295,44 +295,44 @@ function setupEventListeners() {
     // Catching phase buttons
     DOM.btnCatch?.addEventListener('click', () => attemptCatch(false));
     DOM.btnUltraCatch?.addEventListener('click', () => attemptCatch(true));
-    DOM.btnAttack?.addEventListener('click', attackWildPokemon);{
+    DOM.btnAttack?.addEventListener('click', attackWildPokemon);
     
-    // Keyboard shortcuts for catching phasee('hidden');
-    document.addEventListener('keydown', handleCatchingKeyboard);lse {
-           DOM.loadingOverlay.classList.add('hidden');
-    // Enter key for forms    }
+    // Keyboard shortcuts for catching phase
+    document.addEventListener('keydown', handleCatchingKeyboard);
+    
+    // Enter key for forms
     DOM.roomCodeInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') joinRoom();
     });
 }
 
-/**, type = 'info', duration = 3000) {
- * Setup avatar selector options (account creation only)('div');
+/**
+ * Setup avatar selector options (account creation only)
  */
 function setupAvatarSelectors() {
-    const selector = DOM.accountAvatarSelector;oast);
+    const selector = DOM.accountAvatarSelector;
     if (!selector) return;
     AVATARS.forEach((avatar, index) => {
-        const option = document.createElement('div');eIn 0.3s ease reverse';
-        option.className = 'avatar-option' + (index === 0 ? ' selected' : ''); setTimeout(() => toast.remove(), 300);
-        option.textContent = avatar;   }, duration);
-        option.dataset.avatarId = index + 1;}
+        const option = document.createElement('div');
+        option.className = 'avatar-option' + (index === 0 ? ' selected' : '');
+        option.textContent = avatar;
+        option.dataset.avatarId = index + 1;
         option.addEventListener('click', () => selectAvatar(option, selector));
         selector.appendChild(option);
-    });Switch to a different screen
+    });
 }
 
-/**h(screen => screen.classList.remove('active'));
- * Select an avatar
- */   GameState.currentScreen = screenName;
-function selectAvatar(option, selector) {    
-    selector.querySelectorAll('.avatar-option').forEach(opt => opt.classList.remove('selected')); // Show/hide floating leave button based on screen
-    option.classList.add('selected');cept menu and victory
-    GameState.selectedAvatar = parseInt(option.dataset.avatarId); if (DOM.btnLeaveGame) {
-}= 'menu' || screenName === 'victory') {
-den');
 /**
- * Show form (create or join)        DOM.btnLeaveGame.classList.remove('hidden');
+ * Select an avatar
+ */
+function selectAvatar(option, selector) {
+    selector.querySelectorAll('.avatar-option').forEach(opt => opt.classList.remove('selected'));
+    option.classList.add('selected');
+    GameState.selectedAvatar = parseInt(option.dataset.avatarId);
+}
+
+/**
+ * Show form (create or join)
  */
 function showForm(type) {
     DOM.createRoomForm.classList.add('hidden');
@@ -340,13 +340,13 @@ function showForm(type) {
     
     if (type === 'create') {
         DOM.createRoomForm.classList.remove('hidden');
-        // Show account name previewveGameConfirm() {
+        // Show account name preview
         if (DOM.createRoomPreviewName && GameState.account) {
-            const avatarIndex = (GameState.account.avatar_id || 1) - 1;o leave? As the host, this will end the game for everyone!'
-            DOM.createRoomPreviewName.textContent = `${AVATARS[avatarIndex] || AVATARS[0]} ${GameState.account.nickname}`;   : 'Are you sure you want to leave the game?';
-        }   
-    } else {    if (confirm(message)) {
-        DOM.joinRoomForm.classList.remove('hidden');     leaveGame();
+            const avatarIndex = (GameState.account.avatar_id || 1) - 1;
+            DOM.createRoomPreviewName.textContent = `${AVATARS[avatarIndex] || AVATARS[0]} ${GameState.account.nickname}`;
+        }
+    } else {
+        DOM.joinRoomForm.classList.remove('hidden');
         DOM.roomCodeInput.focus();
     }
 }
@@ -354,76 +354,76 @@ function showForm(type) {
 /**
  * Hide form
  */
-function hideForm(type) {etLoading(true);
-    if (type === 'create') {   try {
-        DOM.createRoomForm.classList.add('hidden');        // Try to notify the server
-    } else {e' }).catch(() => {});
+function hideForm(type) {
+    if (type === 'create') {
+        DOM.createRoomForm.classList.add('hidden');
+    } else {
         DOM.joinRoomForm.classList.add('hidden');
     }
-}    }
- 
-// ============================================
-// ACCOUNT MANAGEMENT FUNCTIONS disconnectRealtime();
-// ============================================ 
+}
 
-/** GameState.roomCode = null;
- * Load saved account from localStoragel;
+// ============================================
+// ACCOUNT MANAGEMENT FUNCTIONS
+// ============================================
+
+/**
+ * Load saved account from localStorage
  */
 /**
- * Show the login view and hide the create account view   GameState.isHost = false;
- */    GameState.players = [];
-function showLoginView() { GameState.gameState = 'lobby';
+ * Show the login view and hide the create account view
+ */
+function showLoginView() {
     DOM.accountCreateView?.classList.add('hidden');
-    DOM.accountLoginView?.classList.remove('hidden'); GameState.wildPokemon = null;
-}lse;
+    DOM.accountLoginView?.classList.remove('hidden');
+}
 
 /**
- * Show the create account view and hide the login view   GameState.lastEventId = 0;
- */    
+ * Show the create account view and hide the login view
+ */
 function showCreateView() {
     DOM.accountLoginView?.classList.add('hidden');
-    DOM.accountCreateView?.classList.remove('hidden');aiu do jogo', 'info');
+    DOM.accountCreateView?.classList.remove('hidden');
 }
 
 async function loadSavedAccount() {
     const saved = localStorage.getItem('pokefodase_account');
-    if (saved) {rom server
+    if (saved) {
         try {
-            GameState.account = JSON.parse(saved);() {
+            GameState.account = JSON.parse(saved);
             updateAccountUI();
             // Restore backend session and check for active game
-            await restoreBackendSession();/ Disconnect real-time connection
-            return true;ltime();
-        } catch (e) {   
-            localStorage.removeItem('pokefodase_account');    // Reset GameState
-        } GameState.roomCode = null;
+            await restoreBackendSession();
+            return true;
+        } catch (e) {
+            localStorage.removeItem('pokefodase_account');
+        }
     }
-    return false; GameState.playerId = null;
-}ll;
+    return false;
+}
 
 /**
- * Save account to localStoragee = 'lobby';
- */   GameState.catchingState = null;
-function saveAccount(account) {    GameState.wildPokemon = null;
-    GameState.account = account; GameState.isMyTurn = false;
+ * Save account to localStorage
+ */
+function saveAccount(account) {
+    GameState.account = account;
     localStorage.setItem('pokefodase_account', JSON.stringify(account));
     updateAccountUI();
-} GameState.lastEventId = 0;
+}
 
-/**;
+/**
  * Restore backend PHP session from saved account data
- * Also checks for an active game and reconnects to itset BattleState
+ * Also checks for an active game and reconnects to it
  */
 async function restoreBackendSession() {
     if (!GameState.account) return;
-    tate.player2Team = [];
-    try {leState.player1Active = null;
-        const result = await apiCall(`${API.account}?action=restore_session`, { = null;
+    
+    try {
+        const result = await apiCall(`${API.account}?action=restore_session`, {
             account_id: GameState.account.id,
-            code: GameState.account.coded = false;
+            code: GameState.account.code
         });
-        te.currentTurn = null;
-        if (result.success) {ate.turnNumber = 0;
+        
+        if (result.success) {
             // Update local account data with fresh data from server
             if (result.account) {
                 saveAccount(result.account);
@@ -433,29 +433,29 @@ async function restoreBackendSession() {
             if (result.active_game) {
                 console.log('Active game found, reconnecting:', result.active_game);
                 GameState.roomCode = result.active_game.room_code;
-                GameState.roomId = result.active_game.room_id;ownState !== 'undefined') {
+                GameState.roomId = result.active_game.room_id;
                 GameState.playerId = result.active_game.player_id;
-                GameState.playerNumber = parseInt(result.active_game.player_number);= 0;
+                GameState.playerNumber = parseInt(result.active_game.player_number);
                 GameState.isHost = result.active_game.is_host;
-                GameState.gameMode = result.active_game.game_mode || 'casual';tate.usedMegaStone = false;
-                e.team = [];
+                GameState.gameMode = result.active_game.game_mode || 'casual';
+                
                 showToast('Reconectado à partida!', 'success');
                 enterLobby();
                 handleGameStateChange(result.active_game.game_state);
             }
-        } else {monForMega = null;
+        } else {
             // Session restore failed — account may be invalid, clear it
             console.warn('Session restore failed:', result.error);
             GameState.account = null;
             localStorage.removeItem('pokefodase_account');
-            updateAccountUI();   TournamentState.brackets = [];
-        }       TournamentState.byePlayer = null;
-    } catch (error) {        TournamentState.currentMatch = null;
-        console.error('Error restoring session:', error);     TournamentState.players = [];
-        // Don't clear account on network error, might be temporaryetedMatches = 0;
-    }     TournamentState.totalMatches = 0;
-}rticipant = false;
-PlayerId = null;
+            updateAccountUI();
+        }
+    } catch (error) {
+        console.error('Error restoring session:', error);
+        // Don't clear account on network error, might be temporary
+    }
+}
+
 /**
  * Update account UI elements
  */
@@ -463,137 +463,137 @@ function updateAccountUI() {
     if (GameState.account) {
         DOM.accountSection?.classList.add('hidden');
         DOM.loggedInSection?.classList.remove('hidden');
-        if (DOM.menuAccountName) DOM.menuAccountName.textContent = GameState.account.nickname;OM.btnLeaveGame.classList.add('hidden');
+        if (DOM.menuAccountName) DOM.menuAccountName.textContent = GameState.account.nickname;
         if (DOM.menuAccountElo) DOM.menuAccountElo.textContent = `ELO: ${GameState.account.elo}`;
         if (DOM.menuAccountAvatar) {
             const avatarIndex = (GameState.account.avatar_id || 1) - 1;
             DOM.menuAccountAvatar.textContent = AVATARS[avatarIndex] || AVATARS[0];
         }
-        // Reset code display to hidden state any forms
-        if (DOM.codeDisplay) {e = '';
-            DOM.codeDisplay.textContent = '••••••••';= '';
-            DOM.codeDisplay.dataset.revealed = 'false';f (DOM.roomCodeInput) DOM.roomCodeInput.value = '';
-        }   hideForm('create');
-    } else {    hideForm('join');
-        DOM.accountSection?.classList.remove('hidden'); 
+        // Reset code display to hidden state
+        if (DOM.codeDisplay) {
+            DOM.codeDisplay.textContent = '••••••••';
+            DOM.codeDisplay.dataset.revealed = 'false';
+        }
+    } else {
+        DOM.accountSection?.classList.remove('hidden');
         DOM.loggedInSection?.classList.add('hidden');
-    } console.log('Successfully returned to menu');
+    }
 }
 
 /**
- * Toggle the visibility of the player's account codeth timeout
+ * Toggle the visibility of the player's account code
  */
-function toggleCodeReveal() {= 'POST', timeoutMs = 15000) {
+function toggleCodeReveal() {
     if (!DOM.codeDisplay || !GameState.account) return;
-    const isRevealed = DOM.codeDisplay.dataset.revealed === 'true';ntries(data).forEach(([key, value]) => formData.append(key, value));
+    const isRevealed = DOM.codeDisplay.dataset.revealed === 'true';
     if (isRevealed) {
         DOM.codeDisplay.textContent = '••••••••';
         DOM.codeDisplay.dataset.revealed = 'false';
-        DOM.codeDisplay.classList.remove('revealed');eout(() => controller.abort(), timeoutMs);
+        DOM.codeDisplay.classList.remove('revealed');
     } else {
         DOM.codeDisplay.textContent = GameState.account.code;
-        DOM.codeDisplay.dataset.revealed = 'true';ait fetch(endpoint, {
-        DOM.codeDisplay.classList.add('revealed');       method,
-        // Copy to clipboard           body: method === 'POST' ? formData : undefined,
-        navigator.clipboard.writeText(GameState.account.code).then(() => {            credentials: 'include',
-            showToast('Código copiado!', 'success', 2000);         signal: controller.signal
+        DOM.codeDisplay.dataset.revealed = 'true';
+        DOM.codeDisplay.classList.add('revealed');
+        // Copy to clipboard
+        navigator.clipboard.writeText(GameState.account.code).then(() => {
+            showToast('Código copiado!', 'success', 2000);
         }).catch(() => {});
-    }     
+    }
 }
 
-/**gging
+/**
  * Create a new account
- */.log('API Response:', endpoint, text.substring(0, 500));
-async function createAccount() {   
-    const nickname = DOM.accountNicknameCreate?.value?.trim();    // Try to parse as JSON
+ */
+async function createAccount() {
+    const nickname = DOM.accountNicknameCreate?.value?.trim();
     if (!nickname || nickname.length < 2) {
-        showToast('Nickname deve ter pelo menos 2 caracteres', 'warning');   return JSON.parse(text);
+        showToast('Nickname deve ter pelo menos 2 caracteres', 'warning');
         return;
-    }rror('Failed to parse JSON:', text);
-    ver returned invalid response' };
+    }
+    
     setLoading(true);
     try {
         const result = await apiCall(`${API.account}?action=create`, { 
             nickname,
-            avatar_id: GameState.selectedAvatar ole.error('API Timeout:', endpoint);
+            avatar_id: GameState.selectedAvatar 
         });
         if (result.success) {
-            saveAccount(result.account);('API Error:', error);
+            saveAccount(result.account);
             showToast(`Conta criada! Seu código: ${result.account.code}. Salve!`, 'success', 8000);
         } else {
             showToast(result.error || 'Erro ao criar conta', 'error');
         }
     } catch (error) {
-        console.error('Error creating account:', error);* Create a new room
-        showToast('Erro ao criar conta', 'error'); */
-    } finally {nc function createRoom() {
-        setLoading(false);tePlayerName.value.trim() || 'Player 1';
-    } 
+        console.error('Error creating account:', error);
+        showToast('Erro ao criar conta', 'error');
+    } finally {
+        setLoading(false);
+    }
 }
 
 /**
- * Login to an existing account        action: 'create',
- */ame: playerName,
+ * Login to an existing account
+ */
 async function loginAccount() {
     const nickname = DOM.accountNicknameLogin?.value?.trim();
-    const code = DOM.accountCode?.value?.trim();   
+    const code = DOM.accountCode?.value?.trim();
     
     if (!nickname) {
-        showToast('Digite seu nickname', 'warning');eState.roomId = result.room_id;
-        return;       GameState.playerId = result.player_id;
-    }        GameState.playerNumber = result.player_number;
-    if (!code || code.length !== 8) {.isHost = result.is_host;
-        showToast('Código deve ter 8 dígitos', 'warning');   
+        showToast('Digite seu nickname', 'warning');
+        return;
+    }
+    if (!code || code.length !== 8) {
+        showToast('Código deve ter 8 dígitos', 'warning');
         return;
     }
     
     setLoading(true);
     try {
         const result = await apiCall(`${API.account}?action=login`, { nickname, code });
-        if (result.success) {howToast('Erro de conexão. Tente novamente.', 'error');
+        if (result.success) {
             saveAccount(result.account);
             showToast(`Bem-vindo, ${result.account.nickname}!`, 'success');
         } else {
             showToast(result.error || 'Login falhou', 'error');
         }
-    } catch (error) {in an existing room
-        console.error('Error logging in:', error);*/
-        showToast('Erro ao fazer login', 'error');async function joinRoom() {
-    } finally { const roomCode = DOM.roomCodeInput.value.trim().toUpperCase();
-        setLoading(false); playerName = DOM.joinPlayerName.value.trim() || 'Player';
-    } 
-}ode.length !== 6) {
-código de sala válido com 6 caracteres', 'warning');
+    } catch (error) {
+        console.error('Error logging in:', error);
+        showToast('Erro ao fazer login', 'error');
+    } finally {
+        setLoading(false);
+    }
+}
+
 /**
  * Logout
  */
-function logoutAccount() {   setLoading(true);
-    GameState.account = null;    try {
-    localStorage.removeItem('pokefodase_account');'as', playerName);
-    updateAccountUI();ait apiCall(API.room, {
+function logoutAccount() {
+    GameState.account = null;
+    localStorage.removeItem('pokefodase_account');
+    updateAccountUI();
     showToast('Desconectado', 'info');
-}            room_code: roomCode,
-         player_name: playerName,
-// ============================================ectedAvatar
-// RANKED QUEUE FUNCTIONS     });
+}
+
 // ============================================
-ult:', result);
+// RANKED QUEUE FUNCTIONS
+// ============================================
+
 /**
- * Join the ranked matchmaking queueult.success) {
- */       GameState.roomCode = result.room_code;
-async function joinRankedQueue() {        GameState.roomId = result.room_id;
-    if (!GameState.account) {.playerId = result.player_id;
-        showToast('Faça login primeiro!', 'warning');   GameState.playerNumber = result.player_number;
+ * Join the ranked matchmaking queue
+ */
+async function joinRankedQueue() {
+    if (!GameState.account) {
+        showToast('Faça login primeiro!', 'warning');
         return;
     }
-    ectou à sala!' : 'Entrou na sala!', 'success');
+    
     setLoading(true);
     try {
-        const result = await apiCall(`${API.ranked}?action=join_queue`, {}); na sala', 'error');
+        const result = await apiCall(`${API.ranked}?action=join_queue`, {});
         if (result.success) {
             if (result.status === 'matched') {
                 // Match found! Enter the game
-                showToast('Partida encontrada!', 'success');mente.', 'error');
+                showToast('Partida encontrada!', 'success');
                 GameState.roomCode = result.room_code;
                 GameState.roomId = result.room_id;
                 GameState.playerId = result.player_id;
@@ -606,10 +606,10 @@ async function joinRankedQueue() {        GameState.roomId = result.room_id;
             }
             // Show queue panel
             DOM.rankedQueuePanel?.classList.remove('hidden');
-            if (DOM.rankedQueueStatus) DOM.rankedQueueStatus.textContent = result.message;State.isHost) {
-            if (DOM.rankedQueueCount) {idden');
+            if (DOM.rankedQueueStatus) DOM.rankedQueueStatus.textContent = result.message;
+            if (DOM.rankedQueueCount) {
                 const total = result.total_needed || 4;
-                DOM.rankedQueueCount.textContent = `${total - result.players_needed}/${total} jogadores`;Indicator.classList.add('hidden');
+                DOM.rankedQueueCount.textContent = `${total - result.players_needed}/${total} jogadores`;
             }
             
             // Start polling for queue status
@@ -623,35 +623,35 @@ async function joinRankedQueue() {        GameState.roomId = result.room_id;
                 GameState.playerId = result.active_game.player_id;
                 GameState.playerNumber = parseInt(result.active_game.player_number);
                 GameState.isHost = result.active_game.is_host;
-                GameState.gameMode = result.active_game.game_mode || 'ranked';n copyRoomCode() {
+                GameState.gameMode = result.active_game.game_mode || 'ranked';
                 setLoading(false);
-                enterLobby();wait navigator.clipboard.writeText(GameState.roomCode);
-                handleGameStateChange(result.active_game.game_state);digo copiado!', 'success');
+                enterLobby();
+                handleGameStateChange(result.active_game.game_state);
                 return;
             }
             showToast(result.error || 'Erro ao entrar na fila', 'error');
         }
     } catch (error) {
-        console.error('Error joining ranked queue:', error);**
-        showToast('Erro ao entrar na fila ranqueada', 'error'); * Leave the current room
+        console.error('Error joining ranked queue:', error);
+        showToast('Erro ao entrar na fila ranqueada', 'error');
     } finally {
-        setLoading(false);) {
-    } setLoading(true);
+        setLoading(false);
+    }
 }
-PI.room, { action: 'leave' });
+
 /**
- * Leave the ranked queue    
- *// Reset state
+ * Leave the ranked queue
+ */
 async function leaveRankedQueue() {
     stopQueuePolling();
-    DOM.rankedQueuePanel?.classList.add('hidden');yerId = null;
+    DOM.rankedQueuePanel?.classList.add('hidden');
     
-    try {   GameState.players = [];
-        await apiCall(`${API.ranked}?action=leave_queue`, {});       
-        showToast('Saiu da fila', 'info');        switchScreen('menu');
-    } catch (error) {     showToast('Saiu da sala', 'info');
+    try {
+        await apiCall(`${API.ranked}?action=leave_queue`, {});
+        showToast('Saiu da fila', 'info');
+    } catch (error) {
         console.error('Error leaving queue:', error);
-    }     showToast('Erro ao sair da sala', 'error');
+    }
 }
 
 /**
@@ -663,45 +663,45 @@ function startQueuePolling() {
         try {
             const result = await apiCall(`${API.ranked}?action=check_queue`, {}, 'GET');
             if (result.success) {
-                if (result.status === 'matched') {iniciar', 'warning');
+                if (result.status === 'matched') {
                     stopQueuePolling();
                     showToast('Partida encontrada!', 'success');
                     GameState.roomCode = result.room_code;
                     GameState.roomId = result.room_id;
                     GameState.playerId = result.player_id;
-                    GameState.playerNumber = parseInt(result.player_number);I.room, { action: 'start_game' });
+                    GameState.playerNumber = parseInt(result.player_number);
                     GameState.gameMode = 'ranked';
-                    DOM.rankedQueuePanel?.classList.add('hidden');ss) {
-                    enterLobby();ss');
+                    DOM.rankedQueuePanel?.classList.add('hidden');
+                    enterLobby();
                 } else if (result.status === 'not_in_queue') {
                     stopQueuePolling();
-                    DOM.rankedQueuePanel?.classList.add('hidden');(result.error || 'Falha ao iniciar jogo', 'error');
+                    DOM.rankedQueuePanel?.classList.add('hidden');
                 } else {
-                    if (DOM.rankedQueueCount) {error) {
-                        const total = result.total_needed || 4;e conexão', 'error');
+                    if (DOM.rankedQueueCount) {
+                        const total = result.total_needed || 4;
                         DOM.rankedQueueCount.textContent = `${total - (result.players_needed || 0)}/${total} jogadores`;
-                    }ading(false);
+                    }
                 }
             }
-        } catch (error) {/**
-            console.error('Queue poll error:', error);Refresh room state from server
+        } catch (error) {
+            console.error('Queue poll error:', error);
         }
-    }, 3000);nc function refreshRoomState() {
-}
-te for:', GameState.roomCode);
-/**ion=get_room&room_code=${GameState.roomCode}`, {}, 'GET');
- * Stop queue polling
- */   console.log('Room state result:', result);
-function stopQueuePolling() {       
-    if (GameState.rankedQueueInterval) {        if (result.success) {
-        clearInterval(GameState.rankedQueueInterval);         GameState.players = result.players;
-        GameState.rankedQueueInterval = null;te.gameState = result.room.game_state;
-    }         updateLobbyUI();
+    }, 3000);
 }
 
 /**
- * Show leaderboard    } else {
- */   console.error('Failed to get room state:', result.error);
+ * Stop queue polling
+ */
+function stopQueuePolling() {
+    if (GameState.rankedQueueInterval) {
+        clearInterval(GameState.rankedQueueInterval);
+        GameState.rankedQueueInterval = null;
+    }
+}
+
+/**
+ * Show leaderboard
+ */
 async function showLeaderboard() {
     DOM.leaderboardPanel?.classList.remove('hidden');
     DOM.leaderboardList.innerHTML = '<p>Carregando...</p>';
@@ -711,53 +711,53 @@ async function showLeaderboard() {
         if (result.success && result.leaderboard) {
             DOM.leaderboardList.innerHTML = result.leaderboard.map((entry, i) => `
                 <div class="leaderboard-row ${entry.id == GameState.account?.id ? 'is-self' : ''}">
-                    <span class="lb-rank">#${i + 1}</span> {
-                    <span class="lb-name">${escapeHtml(entry.nickname)}</span>ist.innerHTML = '';
+                    <span class="lb-rank">#${i + 1}</span>
+                    <span class="lb-name">${escapeHtml(entry.nickname)}</span>
                     <span class="lb-elo">ELO: ${entry.elo}</span>
                     <span class="lb-games">${entry.games_played} jogos</span>
-                </div>.forEach(player => {
+                </div>
             `).join('');
-        } else {   card.className = 'player-card';
-            DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';       if (player.id == GameState.playerId) card.classList.add('is-you');
-        }        if (player.is_host) card.classList.add('is-host');
+        } else {
+            DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';
+        }
     } catch (error) {
-        DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';TARS[player.avatar_id - 1] || '😎';
+        DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';
     }
-}        card.innerHTML = `
-         <div class="player-avatar">${avatarEmoji}</div>
-// ============================================er-name">${escapeHtml(player.player_name)}</div>
-// END ACCOUNT/RANKED FUNCTIONS         <div class="player-status ${player.is_ready ? 'ready' : ''}">
-// ============================================_host ? '👑 Anfitrião' : (player.is_ready ? '✓ Pronto' : 'Aguardando...')}
-iv>
+}
+
+// ============================================
+// END ACCOUNT/RANKED FUNCTIONS
+// ============================================
+
 /**
  * Show/hide loading overlay
  */
-function setLoading(show) {);
-    if (show) {   
-        DOM.loadingOverlay.classList.remove('hidden');    // Update start button state
-    } else { const canStart = GameState.isHost && GameState.players.length >= 2;
-        DOM.loadingOverlay.classList.add('hidden');led = !canStart;
+function setLoading(show) {
+    if (show) {
+        DOM.loadingOverlay.classList.remove('hidden');
+    } else {
+        DOM.loadingOverlay.classList.add('hidden');
     }
 }
 
 /**
  * Show toast notification
  */
-function showToast(message, type = 'info', duration = 3000) {if (GameState.eventSource) {
-    const toast = document.createElement('div');tSource.close();
+function showToast(message, type = 'info', duration = 3000) {
+    const toast = document.createElement('div');
     toast.className = `toast ${type}`;
     toast.textContent = message;
-    DOM.toastContainer.appendChild(toast);${API.sse}?room_code=${GameState.roomCode}`;
-       GameState.eventSource = new EventSource(url);
-    setTimeout(() => {    
-        toast.style.animation = 'slideIn 0.3s ease reverse'; GameState.eventSource.onopen = () => {
-        setTimeout(() => toast.remove(), 300);ted');
-    }, duration); };
+    DOM.toastContainer.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.style.animation = 'slideIn 0.3s ease reverse';
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
 }
 
 /**
  * Switch to a different screen
- */    setTimeout(() => {
+ */
 function switchScreen(screenName) {
     Object.values(DOM.screens).forEach(screen => screen.classList.remove('active'));
     DOM.screens[screenName].classList.add('active');
@@ -765,97 +765,101 @@ function switchScreen(screenName) {
     
     // Show/hide floating leave button based on screen
     // Show on all screens except menu and victory
-    if (DOM.btnLeaveGame) {tate.eventSource.addEventListener('connected', (e) => {
-        if (screenName === 'menu' || screenName === 'victory') {   console.log('SSE connection confirmed');
-            DOM.btnLeaveGame.classList.add('hidden');   });
-        } else {    
-            DOM.btnLeaveGame.classList.remove('hidden'); GameState.eventSource.addEventListener('player_joined', (e) => {
-        }(e.data);
-    }     showToast(`${data.data.player_name} entrou!`, 'info');
+    if (DOM.btnLeaveGame) {
+        if (screenName === 'menu' || screenName === 'victory') {
+            DOM.btnLeaveGame.classList.add('hidden');
+        } else {
+            DOM.btnLeaveGame.classList.remove('hidden');
+        }
+    }
 }
 
 /**
- * Leave game with confirmationft', (e) => {
- */    const data = JSON.parse(e.data);
-function leaveGameConfirm() {ata.player_name} saiu`, 'info');
-    const message = GameState.isHost tate();
-        ? 'Are you sure you want to leave? As the host, this will end the game for everyone!');
-        : 'Are you sure you want to leave the game?';   
-        GameState.eventSource.addEventListener('player_ready', (e) => {
-    if (confirm(message)) {     refreshRoomState();
+ * Leave game with confirmation
+ */
+function leaveGameConfirm() {
+    const message = GameState.isHost 
+        ? 'Are you sure you want to leave? As the host, this will end the game for everyone!'
+        : 'Are you sure you want to leave the game?';
+    
+    if (confirm(message)) {
         leaveGame();
-    } 
-}dEventListener('player_updated', (e) => {
-ate();
+    }
+}
+
 /**
  * Force leave the game and return to menu
  */
-async function leaveGame() {a = JSON.parse(e.data);
+async function leaveGame() {
     setLoading(true);
-    try {   if (eventData.first_picker_name) {
-        // Try to notify the server        showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');
+    try {
+        // Try to notify the server
         await apiCall(API.room, { action: 'leave' }).catch(() => {});
-    } catch (e) {go iniciado!', 'success');
+    } catch (e) {
         // Ignore errors - we're leaving anyway
     }
-    });
+    
     // Disconnect real-time connection
-    disconnectRealtime();ventListener('starter_selected', (e) => {
-    stopSelectionPolling();rse(e.data);
-    stopGameStateWatchdog();eState.players.find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
-    scolheu ${data.data.pokemon_name}!`, 'info');
+    disconnectRealtime();
+    stopSelectionPolling();
+    stopGameStateWatchdog();
+    stopCatchingTimer();
+    stopTownTimer();
+    
     // Reset all game state
-    GameState.roomCode = null;n state if we're on the initial screen
-    GameState.roomId = null;n === 'initial') {
-    GameState.playerId = null;;
+    GameState.roomCode = null;
+    GameState.roomId = null;
+    GameState.playerId = null;
     GameState.playerNumber = null;
     GameState.isHost = false;
     GameState.players = [];
-    GameState.gameState = 'lobby';tListener('phase_changed', (e) => {
-    GameState.catchingState = null;(e.data);
-    GameState.wildPokemon = null;.data || {};
-    GameState.isMyTurn = false;    
-    GameState.currentRoute = 1;es first in catching phase
-    GameState.turnsPerPlayer = 8;_phase === 'catching' && eventData.first_player_name) {
-    GameState.myTurnsTaken = 0;de captura! ${eventData.first_player_name} começa!`, 'success');
-    GameState.lastEventId = 0;       } else {
-                const phaseNames = {
-    setLoading(false);             'catching': 'captura',
-    switchScreen('menu');
-    showToast('Saiu do jogo', 'info');
-}             'battle': 'batalha',
-': 'fim'
-/**
- * Return to menu from victory screen (or any end state)        const phaseName = phaseNames[eventData.new_phase] || eventData.new_phase;
- * Resets all game state and disconnects from serverde ${phaseName}!`, 'success');
- */
-function returnToMenu() {ge(eventData.new_phase);
-    console.log('Returning to menu...');
-    
-    // Disconnect real-time connectionrce.addEventListener('state_sync', (e) => {
-    disconnectRealtime();e(e.data);
-    stopSelectionPolling();e(data.game_state);
-    stopGameStateWatchdog();
-    
-    // Reset GameState
-    GameState.roomCode = null;ddEventListener('wild_pokemon_appeared', (e) => {
-    GameState.roomId = null;data);
-    GameState.playerId = null;ata.pokemon_name} selvagem apareceu!`, 'wild');
-    GameState.playerNumber = null;not in the middle of a catch animation
-    GameState.isHost = false;mationInProgress) {
-    GameState.players = [];e();
     GameState.gameState = 'lobby';
     GameState.catchingState = null;
     GameState.wildPokemon = null;
-    GameState.isMyTurn = false;ventListener('catch_attempt', async (e) => {
-    GameState.currentRoute = 1;ta);
-    GameState.turnsPerPlayer = 8;    const isMyAttempt = data.data.player_id == GameState.playerId;
+    GameState.isMyTurn = false;
+    GameState.currentRoute = 1;
+    GameState.turnsPerPlayer = 8;
     GameState.myTurnsTaken = 0;
-    GameState.lastEventId = 0;s during animation
-    GameState.starters = null;nInProgress = true;
+    GameState.lastEventId = 0;
+    
+    setLoading(false);
+    switchScreen('menu');
+    showToast('Saiu do jogo', 'info');
+}
+
+/**
+ * Return to menu from victory screen (or any end state)
+ * Resets all game state and disconnects from server
+ */
+function returnToMenu() {
+    console.log('Returning to menu...');
+    
+    // Disconnect real-time connection
+    disconnectRealtime();
+    stopSelectionPolling();
+    stopGameStateWatchdog();
+    stopCatchingTimer();
+    stopTownTimer();
+    
+    // Reset GameState
+    GameState.roomCode = null;
+    GameState.roomId = null;
+    GameState.playerId = null;
+    GameState.playerNumber = null;
+    GameState.isHost = false;
+    GameState.players = [];
+    GameState.gameState = 'lobby';
+    GameState.catchingState = null;
+    GameState.wildPokemon = null;
+    GameState.isMyTurn = false;
+    GameState.currentRoute = 1;
+    GameState.turnsPerPlayer = 8;
+    GameState.myTurnsTaken = 0;
+    GameState.lastEventId = 0;
+    GameState.starters = null;
     GameState.selectionState = null;
-    r all players
-    // Reset BattleState(
+    
+    // Reset BattleState
     BattleState.player1 = null;
     BattleState.player2 = null;
     BattleState.player1Team = [];
@@ -863,266 +867,266 @@ function returnToMenu() {ge(eventData.new_phase);
     BattleState.player1Active = null;
     BattleState.player2Active = null;
     BattleState.player1HasSelected = false;
-    BattleState.player2HasSelected = false;l) {
-    BattleState.phase = 'selection';ta.data.player_name} capturou ${data.data.pokemon_name} mas o time está cheio! Recebeu R$2.`, 'success');
-    BattleState.currentTurn = null;) {
-    BattleState.turnNumber = 0;ta.player_name} usou Ultra Ball e capturou ${data.data.pokemon_name}! 🟣`, 'success');
-    BattleState.isMyBattle = false;       } else {
-    BattleState.amPlayer1 = false;`${data.data.player_name} capturou ${data.data.pokemon_name}! 🎉`, 'success');
-    if (BattleState.autoTurnTimer) {        }
+    BattleState.player2HasSelected = false;
+    BattleState.phase = 'selection';
+    BattleState.currentTurn = null;
+    BattleState.turnNumber = 0;
+    BattleState.isMyBattle = false;
+    BattleState.amPlayer1 = false;
+    if (BattleState.autoTurnTimer) {
         clearTimeout(BattleState.autoTurnTimer);
         BattleState.autoTurnTimer = null;
     }
-    BattleState.battleLog = [];m_full) {
-    io! Recebeu R$2!`, 'info');
+    BattleState.battleLog = [];
+    
     // Reset TownState (if it exists)
-    if (typeof TownState !== 'undefined') {t(`Você capturou ${data.data.pokemon_name}!`, 'success');
+    if (typeof TownState !== 'undefined') {
         TownState.playerMoney = 0;
         TownState.ultraBalls = 0;
         TownState.hasMegaStone = false;
-        TownState.usedMegaStone = false;ame} tirou ${data.data.dice_roll + 1} - ${data.data.pokemon_name} escapou!`, 'miss');
+        TownState.usedMegaStone = false;
         TownState.team = [];
-        TownState.activeSlot = 0;       // Show toast for the catcher
-        TownState.isReady = false;        if (isMyAttempt) {
-        TownState.players = [];mon_name} escapou!`, 'warning');
+        TownState.activeSlot = 0;
+        TownState.isReady = false;
+        TownState.players = [];
         TownState.selectedPokemonForSell = null;
         TownState.selectedPokemonForMega = null;
     }
-     extra delay before state refresh
-    // Reset TournamentState (if it exists) && data.data.caught) {
-    if (typeof TournamentState !== 'undefined') {imeout(resolve, 2000));
+    
+    // Reset TournamentState (if it exists)
+    if (typeof TournamentState !== 'undefined') {
         TournamentState.brackets = [];
         TournamentState.byePlayer = null;
-        TournamentState.currentMatch = null;efreshes again
-        TournamentState.players = [];false;
+        TournamentState.currentMatch = null;
+        TournamentState.players = [];
         TournamentState.completedMatches = 0;
-        TournamentState.totalMatches = 0;pletes
-        TournamentState.isParticipant = false;   refreshCatchingState();
-        TournamentState.hostPlayerId = null;});
+        TournamentState.totalMatches = 0;
+        TournamentState.isParticipant = false;
+        TournamentState.hostPlayerId = null;
         TournamentState.isTiebreaker = false;
-        TournamentState.tiebreakerType = '';ddEventListener('attack', (e) => {
+        TournamentState.tiebreakerType = '';
         TournamentState.tiebreakerRound = 1;
-    }   const effectText = data.data.type_multiplier > 1 ? ' (Super Efetivo!)' : 
-                          (data.data.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');
-    // Hide the floating leave buttonta.data.attacker_name} causou ${data.data.damage} de dano!${effectText}`, 'attack');
+    }
+    
+    // Hide the floating leave button
     if (DOM.btnLeaveGame) {
-        DOM.btnLeaveGame.classList.add('hidden');    if (data.data.defeated) {
-    }gLog(`${data.data.target_name} fugiu!`, 'fled');
+        DOM.btnLeaveGame.classList.add('hidden');
+    }
     
     // Switch to menu screen
-    switchScreen('menu');oluiu para ${data.data.evolved.to}! 🌟`, 'evolution');
+    switchScreen('menu');
     
-    // Clear any formsngState();
-    if (DOM.createPlayerName) DOM.createPlayerName.value = '';});
+    // Clear any forms
+    if (DOM.createPlayerName) DOM.createPlayerName.value = '';
     if (DOM.joinPlayerName) DOM.joinPlayerName.value = '';
-    if (DOM.roomCodeInput) DOM.roomCodeInput.value = '';changed', (e) => {
-    hideForm('create');       const data = JSON.parse(e.data);
-    hideForm('join');        // Only refresh if we're not in the middle of a catch animation
-         if (!GameState.catchAnimationInProgress) {
-    showToast('Voltou ao menu', 'info');e();
-    console.log('Successfully returned to menu');     }
+    if (DOM.roomCodeInput) DOM.roomCodeInput.value = '';
+    hideForm('create');
+    hideForm('join');
+    
+    showToast('Voltou ao menu', 'info');
+    console.log('Successfully returned to menu');
 }
 
 /**
- * API call helper with timeoutGameState.eventSource.addEventListener('pokemon_switched', (e) => {
+ * API call helper with timeout
  */
-async function apiCall(endpoint, data = {}, method = 'POST', timeoutMs = 15000) {find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
-    const formData = new FormData();!`, 'info');
-    Object.entries(data).forEach(([key, value]) => formData.append(key, value));    refreshCatchingState();
+async function apiCall(endpoint, data = {}, method = 'POST', timeoutMs = 15000) {
+    const formData = new FormData();
+    Object.entries(data).forEach(([key, value]) => formData.append(key, value));
     
     // Create abort controller for timeout
-    const controller = new AbortController();vents
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs); (e) => {
-    ata);
-    try {== 'town') {
-        const response = await fetch(endpoint, { handleTownEvent('town_purchase', data.data);
-            method,}
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    
+    try {
+        const response = await fetch(endpoint, {
+            method,
             body: method === 'POST' ? formData : undefined,
             credentials: 'include',
-            signal: controller.signal_sell', (e) => {
+            signal: controller.signal
         });
         
-        clearTimeout(timeoutId);    handleTownEvent('town_sell', data.data);
+        clearTimeout(timeoutId);
         
         // Get response text first for debugging
         const text = await response.text();
-        console.log('API Response:', endpoint, text.substring(0, 500));urce.addEventListener('town_ready_toggle', (e) => {
+        console.log('API Response:', endpoint, text.substring(0, 500));
         
         // Try to parse as JSON
-        try {   handleTownEvent('town_ready_toggle', data.data);
+        try {
             return JSON.parse(text);
         } catch (e) {
             console.error('Failed to parse JSON:', text);
-            return { success: false, error: 'Server returned invalid response' };se_change', (e) => {
+            return { success: false, error: 'Server returned invalid response' };
         }
-    } catch (error) {andleTownEvent('town_phase_change', data.data);
+    } catch (error) {
         clearTimeout(timeoutId);
         if (error.name === 'AbortError') {
-            console.error('API Timeout:', endpoint);ameState.eventSource.addEventListener('town_switch_active', (e) => {
-            return { success: false, error: 'Request timed out' };       const data = JSON.parse(e.data);
-        }        if (GameState.currentScreen === 'town') {
-        console.error('API Error:', error);         handleTownEvent('town_switch_active', data.data);
+            console.error('API Timeout:', endpoint);
+            return { success: false, error: 'Request timed out' };
+        }
+        console.error('API Error:', error);
         throw error;
-    } });
+    }
 }
 
-/**ted', (e) => {
- * Create a new room    console.log('SSE battle_started raw:', e.data);
- */JSON.parse(e.data);
-async function createRoom() {onsole.log('SSE battle_started parsed:', data);
-    const playerName = GameState.account?.nickname || 'Player 1';data.data || data);
+/**
+ * Create a new room
+ */
+async function createRoom() {
+    const playerName = GameState.account?.nickname || 'Player 1';
     const avatarId = GameState.account?.avatar_id || 1;
     
-    setLoading(true);entListener('match_completed', (e) => {
-    try {st data = JSON.parse(e.data);
-        const result = await apiCall(API.room, {handleTournamentEvent('match_completed', data.data);
+    setLoading(true);
+    try {
+        const result = await apiCall(API.room, {
             action: 'create',
             player_name: playerName,
-            avatar_id: avatarIdurnament_updated', (e) => {
+            avatar_id: avatarId
         });
         
-        if (result.success) {updated', data.data);
+        if (result.success) {
             GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = parseInt(result.player_number);entSource.addEventListener('game_finished', (e) => {
+            GameState.playerNumber = parseInt(result.player_number);
             GameState.isHost = result.is_host;
-            andleTournamentEvent('game_finished', data.data);
+            
             showToast('Sala criada com sucesso!', 'success');
             enterLobby();
-        } else {ameState.eventSource.addEventListener('tiebreaker_tournament', (e) => {
-            showToast(result.error || 'Falha ao criar sala', 'error');SON.parse(e.data);
-        }       const reason = data.data.reason;
-    } catch (error) {        const players = data.data.players || [];
-        showToast('Erro de conexão. Tente novamente.', 'error');     const playerNames = players.map(p => p.name).join(', ');
+        } else {
+            showToast(result.error || 'Falha ao criar sala', 'error');
+        }
+    } catch (error) {
+        showToast('Erro de conexão. Tente novamente.', 'error');
     }
-    setLoading(false);     if (reason === 'badges_draw') {
-}ESEMPATE! ${playerNames} empataram com 5 insígnias! Eles devem batalhar!`, 'warning');
+    setLoading(false);
+}
 
-/**aram com mais insígnias!`, 'warning');
+/**
  * Join an existing room
- */    
-async function joinRoom() {iebreaker
+ */
+async function joinRoom() {
     const roomCode = DOM.roomCodeInput.value.trim().toUpperCase();
     const playerName = GameState.account?.nickname || 'Player';
     const avatarId = GameState.account?.avatar_id || 1;
-    GameState.eventSource.addEventListener('tiebreaker_round', (e) => {
-    if (!roomCode || roomCode.length !== 6) {JSON.parse(e.data);
-        showToast('Digite um código de sala válido com 6 caracteres', 'warning');howToast(`⚔️ Rodada de Desempate ${data.data.round}! ${data.data.remaining_players} jogadores restantes!`, 'info');
+    
+    if (!roomCode || roomCode.length !== 6) {
+        showToast('Digite um código de sala válido com 6 caracteres', 'warning');
         return;
     }
     
     setLoading(true);
-    try {stener('battle_pokemon_selected', (e) => {
-        console.log('Joining room:', roomCode, 'as', playerName);(e.data);
-        const result = await apiCall(API.room, {dleBattleEvent('pokemon_selected', data.data);
+    try {
+        console.log('Joining room:', roomCode, 'as', playerName);
+        const result = await apiCall(API.room, {
             action: 'join',
             room_code: roomCode,
-            player_name: playerName,State.eventSource.addEventListener('battle_started_combat', (e) => {
-            avatar_id: avatarIdse(e.data);
-        });ata);
+            player_name: playerName,
+            avatar_id: avatarId
+        });
         
         console.log('Join result:', result);
         
         if (result.success) {
-            GameState.roomCode = result.room_code;leBattleEvent('attack', data.data);
+            GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = parseInt(result.player_number);entSource.addEventListener('battle_pokemon_fainted', (e) => {
+            GameState.playerNumber = parseInt(result.player_number);
             GameState.isHost = result.is_host;
-            andleBattleEvent('pokemon_fainted', data.data);
+            
             showToast(result.rejoined ? 'Reconectou à sala!' : 'Entrou na sala!', 'success');
             enterLobby();
-        } else {, (e) => {
-            showToast(result.error || 'Falha ao entrar na sala', 'error');ata = JSON.parse(e.data);
-        }'pokemon_sent', data.data);
-    } catch (error) {);
-        console.error('Join error:', error);   
-        showToast('Erro de conexão. Tente novamente.', 'error');    GameState.eventSource.addEventListener('battle_ended', (e) => {
-    } finally {     const data = JSON.parse(e.data);
-        setLoading(false);('battle_ended', data.data);
-    } });
+        } else {
+            showToast(result.error || 'Falha ao entrar na sala', 'error');
+        }
+    } catch (error) {
+        console.error('Join error:', error);
+        showToast('Erro de conexão. Tente novamente.', 'error');
+    } finally {
+        setLoading(false);
+    }
 }
-addEventListener('reconnect', (e) => {
+
 /**
- * Enter the lobby screen    connectSSE();
+ * Enter the lobby screen
  */
 function enterLobby() {
     switchScreen('lobby');
     DOM.displayRoomCode.textContent = GameState.roomCode;
     
     if (GameState.isHost) {
-        DOM.hostIndicator.classList.remove('hidden');tion disconnectSSE() {
+        DOM.hostIndicator.classList.remove('hidden');
     } else {
-        DOM.hostIndicator.classList.add('hidden');tSource.close();
-        DOM.btnStartGame.style.display = 'none';    GameState.eventSource = null;
+        DOM.hostIndicator.classList.add('hidden');
+        DOM.btnStartGame.style.display = 'none';
     }
     
     // Start real-time connection (WebSocket with SSE fallback)
     connectRealtime();
-     server
-    // Start game state watchdog (safety net for missed real-time events)* Falls back to SSE if WebSocket is disabled or fails
-    startGameStateWatchdog(); */
-    ction connectWebSocket() {
-    // Initial room state fetchnabled
-    refreshRoomState(); if (!WS_CONFIG.enabled) {
-}cket disabled, using SSE fallback');
-onnectSSE();
+    
+    // Start game state watchdog (safety net for missed real-time events)
+    startGameStateWatchdog();
+    
+    // Initial room state fetch
+    refreshRoomState();
+}
+
 /**
  * Copy room code to clipboard
  */
 async function copyRoomCode() {
-    try {isconnectWebSocket();
-        await navigator.clipboard.writeText(GameState.roomCode);   disconnectSSE();
-        showToast('Código copiado!', 'success');    
-    } catch (error) { const wsUrl = `${WS_CONFIG.url}/?room_code=${GameState.roomCode}&player_id=${GameState.playerId}`;
-        showToast('Falha ao copiar código', 'error');necting to:', wsUrl);
-    } 
-}
-Socket = new WebSocket(wsUrl);
-/**
- * Leave the current room
- */ Connected!');
-async function leaveRoom() {    GameState.wsReconnectAttempts = 0;
-    setLoading(true);
     try {
-        await apiCall(API.room, { action: 'leave' });ose = (event) => {
-        disconnectRealtime();onnected:', event.code, event.reason);
-         null;
-        // Reset state
-        GameState.roomCode = null;    // Attempt to reconnect if we're still in a room
-        GameState.roomId = null;mCode && GameState.wsReconnectAttempts < WS_CONFIG.maxReconnectAttempts) {
-        GameState.playerId = null;pts++;
-        GameState.isHost = false;le.log(`[WS] Reconnecting in ${WS_CONFIG.reconnectDelay}ms (attempt ${GameState.wsReconnectAttempts})`);
-        GameState.players = [];
-                       if (GameState.roomCode) {
-        switchScreen('menu');  connectWebSocket();
-        showToast('Saiu da sala', 'info');                   }
-    } catch (error) {                }, WS_CONFIG.reconnectDelay);
-        showToast('Erro ao sair da sala', 'error');         } else if (GameState.wsReconnectAttempts >= WS_CONFIG.maxReconnectAttempts) {
-    }[WS] Max reconnect attempts reached, falling back to SSE');
-    setLoading(false);             connectSSE();
+        await navigator.clipboard.writeText(GameState.roomCode);
+        showToast('Código copiado!', 'success');
+    } catch (error) {
+        showToast('Falha ao copiar código', 'error');
+    }
 }
 
-/**    
- * Start the game (host only)error) => {
+/**
+ * Leave the current room
  */
-async function startGame() {onclose will be called after this
-    if (!GameState.isHost) return;   };
+async function leaveRoom() {
+    setLoading(true);
+    try {
+        await apiCall(API.room, { action: 'leave' });
+        disconnectRealtime();
         
-    if (GameState.players.length < 2) {Socket.onmessage = (event) => {
-        showToast('Precisa de pelo menos 2 jogadores para iniciar', 'warning');   try {
-        return;
-    }        handleWebSocketMessage(message);
+        // Reset state
+        GameState.roomCode = null;
+        GameState.roomId = null;
+        GameState.playerId = null;
+        GameState.isHost = false;
+        GameState.players = [];
+        
+        switchScreen('menu');
+        showToast('Saiu da sala', 'info');
+    } catch (error) {
+        showToast('Erro ao sair da sala', 'error');
+    }
+    setLoading(false);
+}
+
+/**
+ * Start the game (host only)
+ */
+async function startGame() {
+    if (!GameState.isHost) return;
     
-    setLoading(true);message:', e);
+    if (GameState.players.length < 2) {
+        showToast('Precisa de pelo menos 2 jogadores para iniciar', 'warning');
+        return;
+    }
+    
+    setLoading(true);
     try {
         const result = await apiCall(API.room, { action: 'start_game' });
         
-        if (result.success) {ch (error) {
-            showToast('Jogo iniciando!', 'success');('[WS] Failed to create WebSocket:', error);
-            // Screen transition will happen via SSE event);
-        } else {   connectSSE();
+        if (result.success) {
+            showToast('Jogo iniciando!', 'success');
+            // Screen transition will happen via SSE event
+        } else {
             showToast(result.error || 'Falha ao iniciar jogo', 'error');
         }
     } catch (error) {
@@ -1130,7 +1134,7 @@ async function startGame() {onclose will be called after this
     }
     setLoading(false);
 }
-ameState.webSocket) {
+
 /**
  * Refresh room state from server
  */
@@ -1139,385 +1143,385 @@ async function refreshRoomState() {
         console.log('Refreshing room state for:', GameState.roomCode);
         const result = await apiCall(`${API.room}?action=get_room&room_code=${GameState.roomCode}`, {}, 'GET');
         
-        console.log('Room state result:', result);me handlers used by SSE
+        console.log('Room state result:', result);
         
         if (result.success) {
-            GameState.players = result.players; = message;
+            GameState.players = result.players;
             GameState.gameState = result.room.game_state;
             updateLobbyUI();
             
-            // Handle game state transitionsetic event data structure matching SSE format
+            // Handle game state transitions
             handleGameStateChange(result.room.game_state);
-        } else {   type: eventType,
-            console.error('Failed to get room state:', result.error);       data: eventData,
-        }        timestamp: timestamp
-    } catch (error) { };
+        } else {
+            console.error('Failed to get room state:', result.error);
+        }
+    } catch (error) {
         console.error('Failed to refresh room state:', error);
-    } // Route to appropriate handler based on event type
+    }
 }
 
 /**
- * Update lobby UI with current players        break;
+ * Update lobby UI with current players
  */
 function updateLobbyUI() {
-    DOM.playersList.innerHTML = '';er_name} entrou!`, 'info');
+    DOM.playersList.innerHTML = '';
     DOM.playerCount.textContent = GameState.players.length;
     
-    GameState.players.forEach(player => {    
+    GameState.players.forEach(player => {
         const card = document.createElement('div');
-        card.className = 'player-card';    showToast(`${eventData.player_name} saiu`, 'info');
-        if (player.id == GameState.playerId) card.classList.add('is-you');te();
+        card.className = 'player-card';
+        if (player.id == GameState.playerId) card.classList.add('is-you');
         if (player.is_host) card.classList.add('is-host');
         
         const avatarEmoji = AVATARS[player.avatar_id - 1] || '😎';
         
-        card.innerHTML = `hRoomState();
-            <div class="player-avatar">${avatarEmoji}</div>  break;
-            <div class="player-name">${escapeHtml(player.player_name)}</div>    
+        card.innerHTML = `
+            <div class="player-avatar">${avatarEmoji}</div>
+            <div class="player-name">${escapeHtml(player.player_name)}</div>
             <div class="player-status ${player.is_ready ? 'ready' : ''}">
-                ${player.is_host ? '👑 Anfitrião' : (player.is_ready ? '✓ Pronto' : 'Aguardando...')}     if (eventData.first_picker_name) {
-            </div>            showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');
+                ${player.is_host ? '👑 Anfitrião' : (player.is_ready ? '✓ Pronto' : 'Aguardando...')}
+            </div>
         `;
         
         DOM.playersList.appendChild(card);
-    });           refreshRoomState();
-                break;
-    // Update start button state         
+    });
+    
+    // Update start button state
     const canStart = GameState.isHost && GameState.players.length >= 2;
-    DOM.btnStartGame.disabled = !canStart;         const playerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
-}${playerName} escolheu ${eventData.pokemon_name}!`, 'info');
-tScreen === 'initial') {
-/**);
- * Connect to Server-Sent Events       }
- */        break;
+    DOM.btnStartGame.disabled = !canStart;
+}
+
+/**
+ * Connect to Server-Sent Events
+ */
 function connectSSE() {
     if (GameState.eventSource) {
-        GameState.eventSource.close();        if (eventData.new_phase === 'catching' && eventData.first_player_name) {
-    }de captura! ${eventData.first_player_name} começa!`, 'success');
+        GameState.eventSource.close();
+    }
     
-    const url = `${API.sse}?room_code=${GameState.roomCode}`;          const phaseNames = {
-    GameState.eventSource = new EventSource(url);                'catching': 'captura',
+    const url = `${API.sse}?room_code=${GameState.roomCode}`;
+    GameState.eventSource = new EventSource(url);
     
-    GameState.eventSource.onopen = () => {,
-        console.log('SSE Connected');atalha',
-    };hed': 'fim'
+    GameState.eventSource.onopen = () => {
+        console.log('SSE Connected');
+    };
     
-    GameState.eventSource.onerror = (error) => {me = phaseNames[eventData.new_phase] || eventData.new_phase;
-        console.error('SSE Error:', error);   showToast(`Indo para fase de ${phaseName}!`, 'success');
+    GameState.eventSource.onerror = (error) => {
+        console.error('SSE Error:', error);
         // Reconnect after delay
-        setTimeout(() => {      handleGameStateChange(eventData.new_phase);
-            if (GameState.roomCode) {        break;
+        setTimeout(() => {
+            if (GameState.roomCode) {
                 connectSSE();
             }
-        }, 3000);_state);
-    };     break;
-            
+        }, 3000);
+    };
+    
     // Handle different event types
     GameState.eventSource.addEventListener('connected', (e) => {
-        console.log('SSE connection confirmed');gem apareceu!`, 'wild');
-    });catchAnimationInProgress) {
-             refreshCatchingState();
-    GameState.eventSource.addEventListener('player_joined', (e) => {        }
+        console.log('SSE connection confirmed');
+    });
+    
+    GameState.eventSource.addEventListener('player_joined', (e) => {
         const data = JSON.parse(e.data);
         showToast(`${data.data.player_name} entrou!`, 'info');
         refreshRoomState();
-    });mptEvent(eventData);
-         break;
-    GameState.eventSource.addEventListener('player_left', (e) => {        
-        const data = JSON.parse(e.data);
-        showToast(`${data.data.player_name} saiu`, 'info');t = eventData.type_multiplier > 1 ? ' (Super Efetivo!)' : 
-        refreshRoomState();                       (eventData.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');
-    });        addCatchingLog(`${eventData.attacker_name} causou ${eventData.damage} de dano!${effectText}`, 'attack');
+    });
     
-    GameState.eventSource.addEventListener('player_ready', (e) => {Log(`${eventData.target_name} fugiu!`, 'fled');
-        refreshRoomState();     }
-    });        if (eventData.evolved) {
-    ara ${eventData.evolved.to}! 🌟`, 'evolution');
+    GameState.eventSource.addEventListener('player_left', (e) => {
+        const data = JSON.parse(e.data);
+        showToast(`${data.data.player_name} saiu`, 'info');
+        refreshRoomState();
+    });
+    
+    GameState.eventSource.addEventListener('player_ready', (e) => {
+        refreshRoomState();
+    });
+    
     GameState.eventSource.addEventListener('player_updated', (e) => {
         refreshRoomState();
     });
     
-    GameState.eventSource.addEventListener('game_started', (e) => {rn_changed':
-        const data = JSON.parse(e.data);) {
-        const eventData = data.data || {};       refreshCatchingState();
+    GameState.eventSource.addEventListener('game_started', (e) => {
+        const data = JSON.parse(e.data);
+        const eventData = data.data || {};
         if (eventData.first_picker_name) {
-            showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');     break;
-        } else {        
+            showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');
+        } else {
             showToast('Jogo iniciado!', 'success');
-        }eState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
+        }
         refreshRoomState();
     });
-        break;
+    
     GameState.eventSource.addEventListener('starter_selected', (e) => {
         const data = JSON.parse(e.data);
         const playerName = GameState.players.find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
-        showToast(`${playerName} escolheu ${data.data.pokemon_name}!`, 'info'); case 'town_sell':
-            case 'town_ready_toggle':
+        showToast(`${playerName} escolheu ${data.data.pokemon_name}!`, 'info');
+        
         // Always refresh selection state - handles race conditions where
-        // the event arrives before screen transition completes=== 'town') {
-        refreshSelectionState(); eventData);
-    });    }
+        // the event arrives before screen transition completes
+        refreshSelectionState();
+    });
     
     GameState.eventSource.addEventListener('phase_changed', (e) => {
         const data = JSON.parse(e.data);
-        const eventData = data.data || {};leTownEvent('town_phase_change', eventData);
+        const eventData = data.data || {};
         
         // Show who goes first in catching phase
-        if (eventData.new_phase === 'catching' && eventData.first_player_name) {ts
+        if (eventData.new_phase === 'catching' && eventData.first_player_name) {
             showToast(`Indo para fase de captura! ${eventData.first_player_name} começa!`, 'success');
-        } else {_started:', eventData);
-            const phaseNames = {('battle_started', eventData);
-                'catching': 'captura',eak;
+        } else {
+            const phaseNames = {
+                'catching': 'captura',
                 'town': 'cidade',
                 'tournament': 'torneio',
-                'battle': 'batalha',   handleTournamentEvent('match_completed', eventData);
+                'battle': 'batalha',
                 'finished': 'fim'
-            };     
-            const phaseName = phaseNames[eventData.new_phase] || eventData.new_phase;    case 'tournament_updated':
+            };
+            const phaseName = phaseNames[eventData.new_phase] || eventData.new_phase;
             showToast(`Indo para fase de ${phaseName}!`, 'success');
-        }ournament_updated', eventData);
+        }
         handleGameStateChange(eventData.new_phase);
-    });     break;
-            
-    GameState.eventSource.addEventListener('state_sync', (e) => {:
+    });
+    
+    GameState.eventSource.addEventListener('state_sync', (e) => {
         const data = JSON.parse(e.data);
         handleGameStateChange(data.game_state);
     });
     
     // Catching phase events
-    GameState.eventSource.addEventListener('wild_pokemon_appeared', (e) => {ta.players || [];
-        const data = JSON.parse(e.data);   const tiePlayerNames = players.map(p => p.name).join(', ');
-        addCatchingLog(`Um ${data.data.pokemon_name} selvagem apareceu!`, 'wild');     if (reason === 'badges_draw') {
-        // Only refresh if we're not in the middle of a catch animation            showToast(`🔥 DESEMPATE! ${tiePlayerNames} empataram com 5 insígnias!`, 'warning');
+    GameState.eventSource.addEventListener('wild_pokemon_appeared', (e) => {
+        const data = JSON.parse(e.data);
+        addCatchingLog(`Um ${data.data.pokemon_name} selvagem apareceu!`, 'wild');
+        // Only refresh if we're not in the middle of a catch animation
         if (!GameState.catchAnimationInProgress) {
-            refreshCatchingState();FINAL! ${tiePlayerNames} empataram!`, 'warning');
+            refreshCatchingState();
         }
-    });    refreshTournamentState();
+    });
     
     GameState.eventSource.addEventListener('catch_attempt', async (e) => {
-        const data = JSON.parse(e.data);case 'tiebreaker_round':
-        const isMyAttempt = data.data.player_id == GameState.playerId;${eventData.round}!`, 'info');
+        const data = JSON.parse(e.data);
+        const isMyAttempt = data.data.player_id == GameState.playerId;
         
         // Block state refreshes during animation
         GameState.catchAnimationInProgress = true;
         
-        // Show dice animation for all playersse 'battle_pokemon_selected':
-        await showInlineDiceAnimation(    handleBattleEvent('pokemon_selected', eventData);
+        // Show dice animation for all players
+        await showInlineDiceAnimation(
             data.data.dice_roll,
             data.data.caught,
             data.data.used_ultra_ball
         );
         
         // Log the result
-        if (data.data.caught) {_attack':
+        if (data.data.caught) {
             if (data.data.team_full) {
-                addCatchingLog(`${data.data.player_name} capturou ${data.data.pokemon_name} mas o time está cheio! Recebeu R$2.`, 'success');reak;
+                addCatchingLog(`${data.data.player_name} capturou ${data.data.pokemon_name} mas o time está cheio! Recebeu R$2.`, 'success');
             } else if (data.data.used_ultra_ball) {
                 addCatchingLog(`${data.data.player_name} usou Ultra Ball e capturou ${data.data.pokemon_name}! 🟣`, 'success');
-            } else {'pokemon_fainted', eventData);
+            } else {
                 addCatchingLog(`${data.data.player_name} capturou ${data.data.pokemon_name}! 🎉`, 'success');
             }
-            emon_sent':
+            
             // Show toast for the catcher
-            if (isMyAttempt) {;
+            if (isMyAttempt) {
                 if (data.data.team_full) {
-                    showToast(`Time cheio! Recebeu R$2!`, 'info');ttle_ended':
+                    showToast(`Time cheio! Recebeu R$2!`, 'info');
                 } else {
-                    showToast(`Você capturou ${data.data.pokemon_name}!`, 'success');break;
+                    showToast(`Você capturou ${data.data.pokemon_name}!`, 'success');
                 }
             }
         } else {
-            addCatchingLog(`${data.data.player_name} tirou ${data.data.dice_roll + 1} - ${data.data.pokemon_name} escapou!`, 'miss');reak;
-               
-            // Show toast for the catcherdefault:
+            addCatchingLog(`${data.data.player_name} tirou ${data.data.dice_roll + 1} - ${data.data.pokemon_name} escapou!`, 'miss');
+            
+            // Show toast for the catcher
             if (isMyAttempt) {
                 showToast(`${data.data.pokemon_name} escapou!`, 'warning');
             }
         }
         
-        // If this was the last Pokemon, add extra delay before state refreshocket)
+        // If this was the last Pokemon, add extra delay before state refresh
         if (data.data.is_last_pokemon && data.data.caught) {
-            await new Promise(resolve => setTimeout(resolve, 2000));nction handleCatchAttemptEvent(eventData) {
-        }eState.playerId;
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        }
         
-        // Animation complete, allow state refreshes againBlock state refreshes during animation
-        GameState.catchAnimationInProgress = false;GameState.catchAnimationInProgress = true;
+        // Animation complete, allow state refreshes again
+        GameState.catchAnimationInProgress = false;
         
-        // Refresh state after animation completesrs
+        // Refresh state after animation completes
         refreshCatchingState();
     });
     
-    GameState.eventSource.addEventListener('attack', (e) => {eventData.used_ultra_ball
+    GameState.eventSource.addEventListener('attack', (e) => {
         const data = JSON.parse(e.data);
         const effectText = data.data.type_multiplier > 1 ? ' (Super Efetivo!)' : 
-                          (data.data.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');g the result
+                          (data.data.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');
         addCatchingLog(`${data.data.attacker_name} causou ${data.data.damage} de dano!${effectText}`, 'attack');
         
-        if (data.data.defeated) {   addCatchingLog(`${eventData.player_name} capturou ${eventData.pokemon_name} mas o time está cheio! Recebeu R$2.`, 'success');
-            addCatchingLog(`${data.data.target_name} fugiu!`, 'fled');ed_ultra_ball) {
-        }     addCatchingLog(`${eventData.player_name} usou Ultra Ball e capturou ${eventData.pokemon_name}! 🟣`, 'success');
-        if (data.data.evolved) {    } else {
-            addCatchingLog(`${data.data.evolved.from} evoluiu para ${data.data.evolved.to}! 🌟`, 'evolution');ntData.pokemon_name}! 🎉`, 'success');
+        if (data.data.defeated) {
+            addCatchingLog(`${data.data.target_name} fugiu!`, 'fled');
+        }
+        if (data.data.evolved) {
+            addCatchingLog(`${data.data.evolved.from} evoluiu para ${data.data.evolved.to}! 🌟`, 'evolution');
         }
         refreshCatchingState();
     });
-    ) {
-    GameState.eventSource.addEventListener('turn_changed', (e) => {       showToast(`Time cheio! Recebeu R$2!`, 'info');
-        const data = JSON.parse(e.data);     } else {
-        // Only refresh if we're not in the middle of a catch animation            showToast(`Você capturou ${eventData.pokemon_name}!`, 'success');
+    
+    GameState.eventSource.addEventListener('turn_changed', (e) => {
+        const data = JSON.parse(e.data);
+        // Only refresh if we're not in the middle of a catch animation
         if (!GameState.catchAnimationInProgress) {
             refreshCatchingState();
         }
-    });apou!`, 'miss');
+    });
     
     // Handle active Pokémon switch - refresh UI for all players
-    GameState.eventSource.addEventListener('pokemon_switched', (e) => {     showToast(`${eventData.pokemon_name} escapou!`, 'warning');
-        const data = JSON.parse(e.data);    }
+    GameState.eventSource.addEventListener('pokemon_switched', (e) => {
+        const data = JSON.parse(e.data);
         const playerName = GameState.players.find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
         showToast(`${playerName} trocou para ${data.data.pokemon_name}!`, 'info');
-        refreshCatchingState(); extra delay
-    });t) {
-     await new Promise(resolve => setTimeout(resolve, 2000));
-    // Town Phase Events}
+        refreshCatchingState();
+    });
+    
+    // Town Phase Events
     GameState.eventSource.addEventListener('town_purchase', (e) => {
         const data = JSON.parse(e.data);
         handleTownEvent('town_purchase', data.data);
-    });reshCatchingState();
+    });
     
     GameState.eventSource.addEventListener('town_sell', (e) => {
         const data = JSON.parse(e.data);
-        handleTownEvent('town_sell', data.data);back)
+        handleTownEvent('town_sell', data.data);
     });
-    tion connectRealtime() {
+    
     GameState.eventSource.addEventListener('town_ready_toggle', (e) => {
         const data = JSON.parse(e.data);
         handleTownEvent('town_ready_toggle', data.data);
-    }); connectSSE();
-    }
+    });
+    
     GameState.eventSource.addEventListener('town_phase_change', (e) => {
         const data = JSON.parse(e.data);
         handleTownEvent('town_phase_change', data.data);
-    });onnect from real-time updates
+    });
     
-    GameState.eventSource.addEventListener('town_switch_active', (e) => {{
+    GameState.eventSource.addEventListener('town_switch_active', (e) => {
         const data = JSON.parse(e.data);
         handleTownEvent('town_switch_active', data.data);
     });
     
     // Tournament Phase Events
-    GameState.eventSource.addEventListener('battle_started', (e) => {le game state changes
+    GameState.eventSource.addEventListener('battle_started', (e) => {
         console.log('SSE battle_started raw:', e.data);
         const data = JSON.parse(e.data);
-        console.log('SSE battle_started parsed:', data); && GameState.currentScreen !== 'lobby') return;
+        console.log('SSE battle_started parsed:', data);
         handleTournamentEvent('battle_started', data.data || data);
-    });eState.gameState = newState;
+    });
     
     GameState.eventSource.addEventListener('match_completed', (e) => {
         const data = JSON.parse(e.data);
         handleTournamentEvent('match_completed', data.data);
-    });         switchScreen('lobby');
-            }
+    });
+    
     GameState.eventSource.addEventListener('tournament_updated', (e) => {
         const data = JSON.parse(e.data);
         handleTournamentEvent('tournament_updated', data.data);
-    });     loadStarterPokemon();
-            break;
+    });
+    
     GameState.eventSource.addEventListener('game_finished', (e) => {
         const data = JSON.parse(e.data);
         handleTournamentEvent('game_finished', data.data);
     });
     
-    GameState.eventSource.addEventListener('tiebreaker_tournament', (e) => {    switchScreen('town');
+    GameState.eventSource.addEventListener('tiebreaker_tournament', (e) => {
         const data = JSON.parse(e.data);
         const reason = data.data.reason;
         const players = data.data.players || [];
         const playerNames = players.map(p => p.name).join(', ');
-           initTournamentPhase();
-        if (reason === 'badges_draw') {    break;
+        
+        if (reason === 'badges_draw') {
             showToast(`🔥 DESEMPATE! ${playerNames} empataram com 5 insígnias! Eles devem batalhar!`, 'warning');
-        } else if (reason === 'final_draw') {);
-            showToast(`🔥 DESEMPATE FINAL! ${playerNames} empataram com mais insígnias!`, 'warning');     initBattlePhase();
-        }        break;
+        } else if (reason === 'final_draw') {
+            showToast(`🔥 DESEMPATE FINAL! ${playerNames} empataram com mais insígnias!`, 'warning');
+        }
         
         // Refresh tournament state to show tiebreaker
         refreshTournamentState();
     });
     
-    GameState.eventSource.addEventListener('tiebreaker_round', (e) => {}
+    GameState.eventSource.addEventListener('tiebreaker_round', (e) => {
         const data = JSON.parse(e.data);
         showToast(`⚔️ Rodada de Desempate ${data.data.round}! ${data.data.remaining_players} jogadores restantes!`, 'info');
         refreshTournamentState();
     });
-unction loadStarterPokemon() {
-    // Battle Phase EventsDOM.starterGrid.innerHTML = '<p>Carregando iniciais...</p>';
+
+    // Battle Phase Events
     GameState.eventSource.addEventListener('battle_pokemon_selected', (e) => {
         const data = JSON.parse(e.data);
         handleBattleEvent('pokemon_selected', data.data);
-    }); // Load available starters (pass room_code for dynamic starter count)
-        const startersResult = await apiCall(`${API.pokemon}?action=get_starters&room_code=${GameState.roomCode}`, {}, 'GET');
+    });
+    
     GameState.eventSource.addEventListener('battle_started_combat', (e) => {
         const data = JSON.parse(e.data);
-        handleBattleEvent('combat_started', data.data);is', 'error');
-    });     return;
-        }
+        handleBattleEvent('combat_started', data.data);
+    });
+    
     GameState.eventSource.addEventListener('battle_attack', (e) => {
-        const data = JSON.parse(e.data);sult.starters.length} starters for ${startersResult.player_count} players`);
+        const data = JSON.parse(e.data);
         handleBattleEvent('attack', data.data);
-    }); // Load current selection state
-        const stateResult = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
+    });
+    
     GameState.eventSource.addEventListener('battle_pokemon_fainted', (e) => {
         const data = JSON.parse(e.data);
-        handleBattleEvent('pokemon_fainted', data.data);leção', 'error');
-    });     return;
-        }
+        handleBattleEvent('pokemon_fainted', data.data);
+    });
+    
     GameState.eventSource.addEventListener('battle_pokemon_sent', (e) => {
         const data = JSON.parse(e.data);
         handleBattleEvent('pokemon_sent', data.data);
-    }); GameState.selectionState = stateResult;
-        
+    });
+    
     GameState.eventSource.addEventListener('battle_ended', (e) => {
         const data = JSON.parse(e.data);
         handleBattleEvent('battle_ended', data.data);
-    });atch (error) {
-           console.error('Error loading starters:', error);
-    GameState.eventSource.addEventListener('reconnect', (e) => {        showToast('Erro ao carregar Pokémon iniciais', 'error');
-        console.log('SSE reconnect requested'); }
+    });
+    
+    GameState.eventSource.addEventListener('reconnect', (e) => {
+        console.log('SSE reconnect requested');
         connectSSE();
     });
 }
 
 /**
  * Disconnect SSE
- */onst starters = GameState.starters || [];
-function disconnectSSE() {   const state = GameState.selectionState || {};
-    if (GameState.eventSource) {    const players = state.players || [];
-        GameState.eventSource.close(); const currentTurn = state.current_turn ?? 0;
-        GameState.eventSource = null;.playerNumber === currentTurn;
+ */
+function disconnectSSE() {
+    if (GameState.eventSource) {
+        GameState.eventSource.close();
+        GameState.eventSource = null;
     }
-} // Find which Pokemon have been selected
-= players
+}
+
 /**
- * Connect to WebSocket serverpokemon_id));
+ * Connect to WebSocket server
  * Falls back to SSE if WebSocket is disabled or fails
- */dicator
-function connectWebSocket() {ntPlayer = players.find(p => p.player_number === currentTurn);
-    // Check if WebSocket is enabledf (isMyTurn) {
-    if (!WS_CONFIG.enabled) {    DOM.initialTurnIndicator.textContent = '🎯 Sua vez! Escolha seu Pokémon inicial!';
-        console.log('[WS] WebSocket disabled, using SSE fallback');style.color = '#4ade80';
-        connectSSE();er) {
-        return;urnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
-    }    DOM.initialTurnIndicator.style.color = '#fbbf24';
+ */
+function connectWebSocket() {
+    // Check if WebSocket is enabled
+    if (!WS_CONFIG.enabled) {
+        console.log('[WS] WebSocket disabled, using SSE fallback');
+        connectSSE();
+        return;
+    }
     
     // Close existing connections
-    disconnectWebSocket();// Render starter grid
-    disconnectSSE();tarterGrid.innerHTML = '';
+    disconnectWebSocket();
+    disconnectSSE();
     
-    const wsUrl = `${WS_CONFIG.url}/?room_code=${GameState.roomCode}&player_id=${GameState.playerId}`;const isSelected = selectedPokemonIds.includes(pokemon.id);
-    console.log('[WS] Connecting to:', wsUrl);on, isSelected, isMyTurn && !isSelected);
+    const wsUrl = `${WS_CONFIG.url}/?room_code=${GameState.roomCode}&player_id=${GameState.playerId}`;
+    console.log('[WS] Connecting to:', wsUrl);
     
     try {
-        GameState.webSocket = new WebSocket(wsUrl);  card.addEventListener('click', () => selectStarter(pokemon.id));
-        }
+        GameState.webSocket = new WebSocket(wsUrl);
+        
         GameState.webSocket.onopen = () => {
             console.log('[WS] Connected!');
             GameState.wsReconnectAttempts = 0;
@@ -1529,71 +1533,71 @@ function connectWebSocket() {ntPlayer = players.find(p => p.player_number === cu
             
             // Attempt to reconnect if we're still in a room
             if (GameState.roomCode && GameState.wsReconnectAttempts < WS_CONFIG.maxReconnectAttempts) {
-                GameState.wsReconnectAttempts++;nCard(pokemon, isSelected = false, isClickable = false) {
-                console.log(`[WS] Reconnecting in ${WS_CONFIG.reconnectDelay}ms (attempt ${GameState.wsReconnectAttempts})`););
+                GameState.wsReconnectAttempts++;
+                console.log(`[WS] Reconnecting in ${WS_CONFIG.reconnectDelay}ms (attempt ${GameState.wsReconnectAttempts})`);
                 setTimeout(() => {
                     if (GameState.roomCode) {
-                        connectWebSocket();ssList.add('clickable');
+                        connectWebSocket();
                     }
-                }, WS_CONFIG.reconnectDelay);nnerHTML = `
-            } else if (GameState.wsReconnectAttempts >= WS_CONFIG.maxReconnectAttempts) {<div class="pokemon-sprite">
-                console.log('[WS] Max reconnect attempts reached, falling back to SSE');${pokemon.name}" 
-                connectSSE();githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">
+                }, WS_CONFIG.reconnectDelay);
+            } else if (GameState.wsReconnectAttempts >= WS_CONFIG.maxReconnectAttempts) {
+                console.log('[WS] Max reconnect attempts reached, falling back to SSE');
+                connectSSE();
             }
-        };iv class="pokemon-name">${pokemon.name}</div>
-        <div class="pokemon-types">
-        GameState.webSocket.onerror = (error) => {efense}">${pokemon.type_defense}</span>
-            console.error('[WS] Error:', error);emon.type_attack !== pokemon.type_defense ? 
-            // onclose will be called after this_attack}">${pokemon.type_attack}</span>` : ''}
         };
-        on-stats">
+        
+        GameState.webSocket.onerror = (error) => {
+            console.error('[WS] Error:', error);
+            // onclose will be called after this
+        };
+        
         GameState.webSocket.onmessage = (event) => {
-            try {   <span class="stat-label">HP</span>
-                const message = JSON.parse(event.data);      <span class="stat-value">${pokemon.base_hp}</span>
-                handleWebSocketMessage(message);    </div>
-            } catch (e) {s="stat">
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (e) {
                 console.error('[WS] Failed to parse message:', e);
-            }on.base_attack}</span>
+            }
         };
-               <div class="stat">
-    } catch (error) {               <span class="stat-label">SPD</span>
-        console.error('[WS] Failed to create WebSocket:', error);                <span class="stat-value">${pokemon.base_speed}</span>
-        console.log('[WS] Falling back to SSE');         </div>
+        
+    } catch (error) {
+        console.error('[WS] Failed to create WebSocket:', error);
+        console.log('[WS] Falling back to SSE');
         connectSSE();
-    }     ${isSelected ? '<div class="selected-overlay">ESCOLHIDO</div>' : ''}
+    }
 }
 
 /**
  * Disconnect WebSocket
  */
 function disconnectWebSocket() {
-    if (GameState.webSocket) {* Render the list of players and their selections
-        GameState.webSocket.close(); */
-        GameState.webSocket = null;ction renderSelectedList(players) {
+    if (GameState.webSocket) {
+        GameState.webSocket.close();
+        GameState.webSocket = null;
     }
     GameState.wsReconnectAttempts = 0;
-} players.forEach(player => {
-t('div');
+}
+
 /**
- * Handle incoming WebSocket messages    
- * Routes messages to the same handlers used by SSE] || '😎';
- */    const isMe = player.id == GameState.playerId;
+ * Handle incoming WebSocket messages
+ * Routes messages to the same handlers used by SSE
+ */
 function handleWebSocketMessage(message) {
-    const { event: eventType, data: eventData, timestamp } = message;name) {
-    ML = `
-    console.log('[WS] Received:', eventType, eventData);ss="mini-avatar">${avatarEmoji}</div>
-    "${isMe ? 'is-you' : ''}">${escapeHtml(player.player_name)}</span>
-    // Create a synthetic event data structure matching SSE format          <span>→</span>
-    const syntheticData = {            <img src="${player.sprite_url}" alt="${player.pokemon_name}" 
+    const { event: eventType, data: eventData, timestamp } = message;
+    
+    console.log('[WS] Received:', eventType, eventData);
+    
+    // Create a synthetic event data structure matching SSE format
+    const syntheticData = {
         type: eventType,
-        data: eventData,rror="this.style.display='none'">
-        timestamp: timestamplayer.pokemon_name}</span>
+        data: eventData,
+        timestamp: timestamp
     };
     
-    // Route to appropriate handler based on event typeitem.innerHTML = `
-    switch (eventType) {ini-avatar">${avatarEmoji}</div>
-        case 'connected':(player.player_name)}</span>
-            console.log('[WS] Connection confirmed');iting">Aguardando...</span>
+    // Route to appropriate handler based on event type
+    switch (eventType) {
+        case 'connected':
+            console.log('[WS] Connection confirmed');
             break;
             
         case 'player_joined':
@@ -1604,132 +1608,132 @@ function handleWebSocketMessage(message) {
         case 'player_left':
             showToast(`${eventData.player_name} saiu`, 'info');
             refreshRoomState();
-            break;ectStarter(pokemonId) {
-            ng(true);
+            break;
+            
         case 'player_ready':
         case 'player_updated':
             refreshRoomState();
-            break;'select_starter',
+            break;
             
         case 'game_started':
             if (eventData.first_picker_name) {
-                showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');.success) {
-            } else {showToast(`Você escolheu ${result.pokemon.name}!`, 'success');
+                showToast(`Jogo iniciado! ${eventData.first_picker_name} escolhe primeiro!`, 'success');
+            } else {
                 showToast('Jogo iniciado!', 'success');
             }
-            refreshRoomState();...', 'info');
+            refreshRoomState();
             break;
             
-        case 'starter_selected': Refresh selection state
-            const playerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';    await refreshSelectionState();
+        case 'starter_selected':
+            const playerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
             showToast(`${playerName} escolheu ${eventData.pokemon_name}!`, 'info');
             // Always refresh - handles race conditions where event arrives before screen transition
             refreshSelectionState();
             break;
             
-        case 'phase_changed':rter:', error);
-            if (eventData.new_phase === 'catching' && eventData.first_player_name) { inicial', 'error');
+        case 'phase_changed':
+            if (eventData.new_phase === 'catching' && eventData.first_player_name) {
                 showToast(`Indo para fase de captura! ${eventData.first_player_name} começa!`, 'success');
             } else {
                 const phaseNames = {
                     'catching': 'captura',
                     'town': 'cidade',
                     'tournament': 'torneio',
-                    'battle': 'batalha',lection state
+                    'battle': 'batalha',
                     'finished': 'fim'
-                };reshSelectionState() {
+                };
                 const phaseName = phaseNames[eventData.new_phase] || eventData.new_phase;
-                showToast(`Indo para fase de ${phaseName}!`, 'success');it apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
+                showToast(`Indo para fase de ${phaseName}!`, 'success');
             }
-            handleGameStateChange(eventData.new_phase);.success) {
-            break;GameState.selectionState = result;
-            on();
+            handleGameStateChange(eventData.new_phase);
+            break;
+            
         case 'state_sync':
             handleGameStateChange(eventData.game_state);
-            break;e:', error);
+            break;
             
         // Catching phase events
         case 'wild_pokemon_appeared':
-            addCatchingLog(`Um ${eventData.pokemon_name} selvagem apareceu!`, 'wild');===================================
+            addCatchingLog(`Um ${eventData.pokemon_name} selvagem apareceu!`, 'wild');
             if (!GameState.catchAnimationInProgress) {
                 refreshCatchingState();
             }
             break;
-            hing phase
+            
         case 'catch_attempt':
             handleCatchAttemptEvent(eventData);
             break;
             
         case 'attack':
-            const effectText = eventData.type_multiplier > 1 ? ' (Super Efetivo!)' : atchingLogMessages) {
-                              (eventData.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');rHTML = '';
+            const effectText = eventData.type_multiplier > 1 ? ' (Super Efetivo!)' : 
+                              (eventData.type_multiplier < 1 ? ' (Pouco Efetivo...)' : '');
             addCatchingLog(`${eventData.attacker_name} causou ${eventData.damage} de dano!${effectText}`, 'attack');
             if (eventData.defeated) {
-                addCatchingLog(`${eventData.target_name} fugiu!`, 'fled');e de Captura!', 'system');
+                addCatchingLog(`${eventData.target_name} fugiu!`, 'fled');
             }
-            if (eventData.evolved) {initial state
-                addCatchingLog(`${eventData.evolved.from} evoluiu para ${eventData.evolved.to}! 🌟`, 'evolution');te();
+            if (eventData.evolved) {
+                addCatchingLog(`${eventData.evolved.from} evoluiu para ${eventData.evolved.to}! 🌟`, 'evolution');
             }
             refreshCatchingState();
             break;
-            g phase state from server
+            
         case 'turn_changed':
-            if (!GameState.catchAnimationInProgress) {ate() {
+            if (!GameState.catchAnimationInProgress) {
                 refreshCatchingState();
-            }.roomCode}`, {}, 'GET');
+            }
             break;
-            .success) {
-        case 'pokemon_switched':GameState.catchingState = result;
-            const switchPlayerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';kemon = result.wild_pokemon;
-            showToast(`${switchPlayerName} trocou para ${eventData.pokemon_name}!`, 'info');Route = result.room.current_route || 1;
-            refreshCatchingState();ountersRemaining = result.room.encounters_remaining || 0;
+            
+        case 'pokemon_switched':
+            const switchPlayerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
+            showToast(`${switchPlayerName} trocou para ${eventData.pokemon_name}!`, 'info');
+            refreshCatchingState();
             break;
-            rn
-        // Town Phase Eventse.playerId);
-        case 'town_purchase':er == result.room.current_player_turn;
+            
+        // Town Phase Events
+        case 'town_purchase':
         case 'town_sell':
-        case 'town_ready_toggle':ate all UI elements
-        case 'town_switch_active':renderCatchingUI(result);
+        case 'town_ready_toggle':
+        case 'town_switch_active':
             // Always handle town events - don't gate on currentScreen
-            // because the screen might not have transitioned yet and I'm first
-            handleTownEvent(eventType, eventData);esult.wild_pokemon && GameState.isMyTurn && GameState.isHost) {
-            break;    await spawnWildPokemon();
+            // because the screen might not have transitioned yet
+            handleTownEvent(eventType, eventData);
+            break;
             
         case 'town_phase_change':
-            handleTownEvent('town_phase_change', eventData);result.error);
+            handleTownEvent('town_phase_change', eventData);
             break;
-            ) {
-        // Tournament/Battle Eventsole.error('Error refreshing catching state:', error);
+            
+        // Tournament/Battle Events
         case 'battle_started':
             console.log('[WS] battle_started:', eventData);
             handleTournamentEvent('battle_started', eventData);
             break;
-            ements
+            
         case 'match_completed':
             handleTournamentEvent('match_completed', eventData);
-            break;ata.room;
-            ayers = data.players;
-        case 'tournament_updated':wild_pokemon;
+            break;
+            
+        case 'tournament_updated':
             // Always handle tournament updates regardless of current screen
-            handleTournamentEvent('tournament_updated', eventData);e info
-            break;routeName) {
-            oom.route_name || `Rota ${room.current_route}`;
+            handleTournamentEvent('tournament_updated', eventData);
+            break;
+            
         case 'game_finished':
             handleTournamentEvent('game_finished', eventData);
-            break;ters_remaining}`;
+            break;
             
         case 'tiebreaker_tournament':
-            const reason = eventData.reason;oom.current_route}/8`;
+            const reason = eventData.reason;
             const players = eventData.players || [];
             const tiePlayerNames = players.map(p => p.name).join(', ');
             if (reason === 'badges_draw') {
-                showToast(`🔥 DESEMPATE! ${tiePlayerNames} empataram com 5 insígnias!`, 'warning');mon(wildPokemon);
+                showToast(`🔥 DESEMPATE! ${tiePlayerNames} empataram com 5 insígnias!`, 'warning');
             } else if (reason === 'final_draw') {
                 showToast(`🔥 DESEMPATE FINAL! ${tiePlayerNames} empataram!`, 'warning');
             }
             refreshTournamentState();
-            break;on buttons
-            tionButtons(wildPokemon);
+            break;
+            
         case 'tiebreaker_round':
             showToast(`⚔️ Rodada de Desempate ${eventData.round}!`, 'info');
             refreshTournamentState();
@@ -1738,301 +1742,313 @@ function handleWebSocketMessage(message) {
         // Battle Phase Events
         case 'battle_pokemon_selected':
             handleBattleEvent('pokemon_selected', eventData);
-            break;derWildPokemon(pokemon) {
-            ay) return;
+            break;
+            
         case 'battle_started_combat':
             handleBattleEvent('combat_started', eventData);
-            break;wildPokemonDisplay.classList.remove('hidden');
-            assList.add('hidden');
+            break;
+            
         case 'battle_attack':
-            handleBattleEvent('attack', eventData);ldPokemonImg) {
-            break;DOM.wildPokemonImg.src = pokemon.sprite_url || 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png';
-            = pokemon.name;
+            handleBattleEvent('attack', eventData);
+            break;
+            
         case 'battle_pokemon_fainted':
-            handleBattleEvent('pokemon_fainted', eventData);ldPokemonName) {
-            break;DOM.wildPokemonName.textContent = pokemon.name;
+            handleBattleEvent('pokemon_fainted', eventData);
+            break;
             
         case 'battle_pokemon_sent':
-            handleBattleEvent('pokemon_sent', eventData); type (always shown)
-            break;DOM.wildPokemonTypeDef) {
-            PokemonTypeDef.textContent = pokemon.type_defense;
-        case 'battle_ended':ame = `type-badge ${pokemon.type_defense}`;
+            handleBattleEvent('pokemon_sent', eventData);
+            break;
+            
+        case 'battle_ended':
             handleBattleEvent('battle_ended', eventData);
             break;
-            k type (only shown if different from defense)
+            
         case 'pong':
-            // Heartbeat response, ignore       if (pokemon.type_attack && pokemon.type_attack !== pokemon.type_defense) {
-            break;               DOM.wildPokemonTypeAtk.textContent = pokemon.type_attack;
-                            DOM.wildPokemonTypeAtk.className = `type-badge ${pokemon.type_attack}`;
-        default:             DOM.wildPokemonTypeAtk.classList.remove('hidden');
+            // Heartbeat response, ignore
+            break;
+            
+        default:
             console.log('[WS] Unhandled event type:', eventType);
-    }             DOM.wildPokemonTypeAtk.classList.add('hidden');
+    }
 }
 
-/**    
+/**
  * Handle catch attempt event (shared between SSE and WebSocket)
  */
-async function handleCatchAttemptEvent(eventData) {        DOM.wildPokemonAtk.textContent = pokemon.base_attack || '?';
+async function handleCatchAttemptEvent(eventData) {
     const isMyAttempt = eventData.player_id == GameState.playerId;
     
-    // Block state refreshes during animationpd.textContent = pokemon.base_speed || '?';
+    // Block state refreshes during animation
     GameState.catchAnimationInProgress = true;
     
-    // Show dice animation for all players  // Update HP bar
-    await showInlineDiceAnimation(    const hpPercent = Math.max(0, (pokemon.current_hp / pokemon.max_hp) * 100);
-        eventData.dice_roll,pBar) {
-        eventData.caught,tyle.width = `${hpPercent}%`;
-        eventData.used_ultra_balle = 'hp-bar';
+    // Show dice animation for all players
+    await showInlineDiceAnimation(
+        eventData.dice_roll,
+        eventData.caught,
+        eventData.used_ultra_ball
     );
-    -low');
+    
     // Log the result
-    if (eventData.caught) {DOM.wildHpBar.classList.add('hp-medium');
+    if (eventData.caught) {
         if (eventData.team_full) {
             addCatchingLog(`${eventData.player_name} capturou ${eventData.pokemon_name} mas o time está cheio! Recebeu R$2.`, 'success');
-        } else if (eventData.used_ultra_ball) {if (DOM.wildHpText) {
-            addCatchingLog(`${eventData.player_name} usou Ultra Ball e capturou ${eventData.pokemon_name}! 🟣`, 'success');.textContent = `${pokemon.current_hp}/${pokemon.max_hp}`;
+        } else if (eventData.used_ultra_ball) {
+            addCatchingLog(`${eventData.player_name} usou Ultra Ball e capturou ${eventData.pokemon_name}! 🟣`, 'success');
         } else {
             addCatchingLog(`${eventData.player_name} capturou ${eventData.pokemon_name}! 🎉`, 'success');
-        }monDisplay.classList.add('hidden');
+        }
         
         if (isMyAttempt) {
             if (eventData.team_full) {
                 showToast(`Time cheio! Recebeu R$2!`, 'info');
             } else {
-                showToast(`Você capturou ${eventData.pokemon_name}!`, 'success');r turn indicator
+                showToast(`Você capturou ${eventData.pokemon_name}!`, 'success');
             }
         }
-    } else { currentPlayer = players.find(p => p.player_number == currentTurn);
+    } else {
         addCatchingLog(`${eventData.player_name} tirou ${eventData.dice_roll + 1} - ${eventData.pokemon_name} escapou!`, 'miss');
-        if (DOM.currentTurnName && currentPlayer) {
-        if (isMyAttempt) {yer.id == GameState.playerId 
+        
+        if (isMyAttempt) {
             showToast(`${eventData.pokemon_name} escapou!`, 'warning');
         }
     }
     
-    // If this was the last Pokemon, add extra delayndicator) {
+    // If this was the last Pokemon, add extra delay
     if (eventData.is_last_pokemon && eventData.caught) {
-        await new Promise(resolve => setTimeout(resolve, 2000));nIndicator.classList.add('your-turn');
-    }       } else {
-                DOM.catchingTurnIndicator.classList.remove('your-turn');
-    // Animation complete     }
+        await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    
+    // Animation complete
     GameState.catchAnimationInProgress = false;
     refreshCatchingState();
 }
 
-/**ate
+/**
  * Connect to real-time updates (WebSocket with SSE fallback)
- */Buttons(wildPokemon) {
-function connectRealtime() {onst canAct = GameState.isMyTurn && wildPokemon;
-    if (WS_CONFIG.enabled) {   const actionButtonsContainer = document.getElementById('player-action-buttons');
-        connectWebSocket();    
-    } else { // Show/hide action buttons based on turn
+ */
+function connectRealtime() {
+    if (WS_CONFIG.enabled) {
+        connectWebSocket();
+    } else {
         connectSSE();
-    }     if (GameState.isMyTurn) {
-}ner.classList.remove('hidden');
-
-/**ttonsContainer.classList.add('hidden');
- * Disconnect from real-time updates       }
- */    }
-function disconnectRealtime() { 
-    disconnectWebSocket();
-    disconnectSSE();     DOM.btnCatch.disabled = !canAct;
+    }
 }
 
-/**has ultra balls
- * Handle game state changesGameState.catchingState?.players?.find(p => p.id == GameState.playerId);
- */Player?.ultra_balls || 0;
-function handleGameStateChange(newState) {led = !canAct || ultraBalls <= 0;
-    // Map game states to expected screensllCount) {
-    const stateToScreen = {Content = `${ultraBalls}`;
+/**
+ * Disconnect from real-time updates
+ */
+function disconnectRealtime() {
+    disconnectWebSocket();
+    disconnectSSE();
+}
+
+/**
+ * Handle game state changes
+ */
+function handleGameStateChange(newState) {
+    // Map game states to expected screens
+    const stateToScreen = {
         'lobby': 'lobby',
         'initial': 'initial',
-        'catching': 'catching', (DOM.btnAttack) {
-        'town': 'town',    // Check if player has an active Pokemon
-        'tournament': 'tournament',layers?.find(p => p.id == GameState.playerId);
+        'catching': 'catching',
+        'town': 'town',
+        'tournament': 'tournament',
         'battle': 'battle',
-        'finished': 'victory'    DOM.btnAttack.disabled = !canAct || !hasActivePokemon;
+        'finished': 'victory'
     };
     
     const expectedScreen = stateToScreen[newState];
     const alreadyOnCorrectScreen = expectedScreen && GameState.currentScreen === expectedScreen;
     
     // Skip if we're already in this state AND on the correct screen
-    // (unless we're in lobby, where we always re-process to handle game_started), currentTurn) {
-    if (newState === GameState.gameState && alreadyOnCorrectScreen && newState !== 'lobby') return;if (!DOM.catchingPlayersPanel) return;
+    // (unless we're in lobby, where we always re-process to handle game_started)
+    if (newState === GameState.gameState && alreadyOnCorrectScreen && newState !== 'lobby') return;
     
-    console.log(`[StateChange] ${GameState.gameState} → ${newState} (screen: ${GameState.currentScreen} → ${expectedScreen})`);rsPanel.innerHTML = '';
+    console.log(`[StateChange] ${GameState.gameState} → ${newState} (screen: ${GameState.currentScreen} → ${expectedScreen})`);
     
     GameState.gameState = newState;
-     card = document.createElement('div');
-    switch (newState) {Name = 'catching-player-card';
-        case 'lobby':er_number == currentTurn) card.classList.add('active-turn');
-            if (GameState.currentScreen !== 'lobby') {er.id == GameState.playerId;
-                switchScreen('lobby');.classList.add('is-you');
+    
+    switch (newState) {
+        case 'lobby':
+            stopCatchingTimer();
+            stopTownTimer();
+            if (GameState.currentScreen !== 'lobby') {
+                switchScreen('lobby');
             }
-            break;arEmoji = AVATARS[player.avatar_id - 1] || '😎';
-        case 'initial':yer.team || [];
+            break;
+        case 'initial':
+            stopCatchingTimer();
+            stopTownTimer();
             switchScreen('initial');
-            loadStarterPokemon();all Pokemon sprites with EXP (only if they can evolve)
+            loadStarterPokemon();
             startSelectionPolling();
-            break;ength > 0) {
-        case 'catching': = '<div class="player-team-grid">';
-            stopSelectionPolling();=> {
-            switchScreen('catching');ve = pokemon.is_active;
-            initCatchingPhase();nst expDisplay = pokemon.current_exp || 0;
-            break;lick = isCurrentPlayer;
-        case 'town':on.evolution_id != null;
-            switchScreen('town');nEvolve ? ` | EXP: ${expDisplay}/5` : '';
-            initTownPhase();nst statsTitle = `${pokemon.name}${isActive ? ' (Ativo)' : ''}\nHP: ${pokemon.base_hp} | ATQ: ${pokemon.base_attack} | VEL: ${pokemon.base_speed}${expInfo}`;
-            break;ml += `
-        case 'tournament':m-pokemon-slot ${isActive ? 'active' : ''} ${canClick ? 'clickable' : ''}" 
-            switchScreen('tournament');="${statsTitle}"
-            initTournamentPhase();       ${canClick ? `data-pokemon-id="${pokemon.id}"` : ''}>
-            break;<img src="${pokemon.sprite_url || ''}" alt="${pokemon.name}" class="team-pokemon-sprite" onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">
-        case 'battle': ? `<span class="pokemon-exp-badge">${expDisplay}</span>` : ''}
+            break;
+        case 'catching':
+            stopSelectionPolling();
+            stopTownTimer();
+            switchScreen('catching');
+            initCatchingPhase();
+            break;
+        case 'town':
+            stopCatchingTimer();
+            switchScreen('town');
+            initTownPhase();
+            break;
+        case 'tournament':
+            stopCatchingTimer();
+            stopTownTimer();
+            switchScreen('tournament');
+            initTournamentPhase();
+            break;
+        case 'battle':
+            stopCatchingTimer();
+            stopTownTimer();
             switchScreen('battle');
             initBattlePhase();
             break;
-        case 'finished': empty slots
-            stopSelectionPolling();       for (let i = team.length; i < 6; i++) {
-            stopGameStateWatchdog();               teamHtml += '<div class="team-pokemon-slot empty"></div>';
-            switchScreen('victory');            }
-            loadVictoryScreen();         teamHtml += '</div>';
+        case 'finished':
+            stopSelectionPolling();
+            stopGameStateWatchdog();
+            stopCatchingTimer();
+            stopTownTimer();
+            switchScreen('victory');
+            loadVictoryScreen();
             break;
-    }         teamHtml = '<div class="no-pokemon">Nenhum Pokémon ainda</div>';
+    }
 }
 
 /**
- * Load starter Pokemon options        <div class="catching-player-header">
- */       <span class="player-avatar-mini">${avatarEmoji}</span>
-async function loadStarterPokemon() {span>
+ * Load starter Pokemon options
+ */
+async function loadStarterPokemon() {
     DOM.starterGrid.innerHTML = '<p>Carregando iniciais...</p>';
-    DOM.initialTurnIndicator.textContent = 'Carregando...';    </div>
+    DOM.initialTurnIndicator.textContent = 'Carregando...';
     
     try {
-        // Load available starters (pass room_code for dynamic starter count)an class="stat-item" title="Insígnias">🎖️ ${player.badges || 0}</span>
-        const startersResult = await apiCall(`${API.pokemon}?action=get_starters&room_code=${GameState.roomCode}`, {}, 'GET');       <span class="stat-item" title="Dinheiro">💰 R$${player.money || 0}</span>
-                <span class="stat-item" title="Ultra Balls">◓ ${player.ultra_balls || 0}</span>
+        // Load available starters (pass room_code for dynamic starter count)
+        const startersResult = await apiCall(`${API.pokemon}?action=get_starters&room_code=${GameState.roomCode}`, {}, 'GET');
+        
         if (!startersResult.success) {
-            showToast('Falha ao carregar iniciais', 'error');`;
+            showToast('Falha ao carregar iniciais', 'error');
             return;
         }
-        if (isCurrentPlayer) {
-        console.log(`Loaded ${startersResult.starters.length} starters for ${startersResult.player_count} players`);.team-pokemon-slot.clickable:not(.active)').forEach(slot => {
         
-        // Load current selection state const pokemonId = slot.dataset.pokemonId;
-        const stateResult = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');           if (pokemonId) {
-                        setActivePokemon(pokemonId);
+        console.log(`Loaded ${startersResult.starters.length} starters for ${startersResult.player_count} players`);
+        
+        // Load current selection state
+        const stateResult = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
+        
         if (!stateResult.success) {
             showToast('Falha ao carregar estado de seleção', 'error');
             return;
-        }}
+        }
         
-        // Store starters in game stateappendChild(card);
+        // Store starters in game state
         GameState.starters = startersResult.starters;
         GameState.selectionState = stateResult;
         
         // Render the UI
-        renderStarterSelection();t a Pokemon as active
-        */
-    } catch (error) {async function setActivePokemon(pokemonId) {
-        console.error('Error loading starters:', error); try {
-        showToast('Erro ao carregar Pokémon iniciais', 'error');piCall(API.catching, { 
-    }         action: 'set_active',
+        renderStarterSelection();
+        
+    } catch (error) {
+        console.error('Error loading starters:', error);
+        showToast('Erro ao carregar Pokémon iniciais', 'error');
+    }
 }
 
 /**
  * Render starter selection UI
  */
 function renderStarterSelection() {
-    const starters = GameState.starters || [];        await refreshCatchingState();
+    const starters = GameState.starters || [];
     const state = GameState.selectionState || {};
-    const players = state.players || [];'Falha ao trocar Pokémon', 'error');
+    const players = state.players || [];
     const currentTurn = parseInt(state.current_turn ?? 0);
     const isMyTurn = GameState.playerNumber == currentTurn;
-        console.error('Error setting active Pokemon:', error);
-    // Find which Pokemon have been selectedtrocar Pokémon', 'error');
+    
+    // Find which Pokemon have been selected
     const selectedPokemonIds = players
         .filter(p => p.pokemon_id)
         .map(p => parseInt(p.pokemon_id));
     
-    // Update turn indicator by first player/host when needed)
+    // Update turn indicator
     const currentPlayer = players.find(p => p.player_number === currentTurn);
     if (isMyTurn) {
-        DOM.initialTurnIndicator.textContent = '🎯 Sua vez! Escolha seu Pokémon inicial!';ry {
-        DOM.initialTurnIndicator.style.color = '#4ade80';    const result = await apiCall(API.catching, { action: 'spawn_wild' });
+        DOM.initialTurnIndicator.textContent = '🎯 Sua vez! Escolha seu Pokémon inicial!';
+        DOM.initialTurnIndicator.style.color = '#4ade80';
     } else if (currentPlayer) {
         DOM.initialTurnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
-        DOM.initialTurnIndicator.style.color = '#fbbf24'; = result.pokemon;
+        DOM.initialTurnIndicator.style.color = '#fbbf24';
     }
     
-    // Render starter grid    console.error('Failed to spawn wild Pokemon:', result.error);
+    // Render starter grid
     DOM.starterGrid.innerHTML = '';
     starters.forEach(pokemon => {
-        const isSelected = selectedPokemonIds.includes(pokemon.id);onsole.error('Error spawning wild Pokemon:', error);
+        const isSelected = selectedPokemonIds.includes(pokemon.id);
         const card = createPokemonCard(pokemon, isSelected, isMyTurn && !isSelected);
         
         if (isMyTurn && !isSelected) {
             card.addEventListener('click', () => selectStarter(pokemon.id));
-        }d Pokemon
+        }
         
-        DOM.starterGrid.appendChild(card);sync function attemptCatch(useUltraBall = false) {
-    });    if (!GameState.isMyTurn || !GameState.wildPokemon) {
-         showToast("Não é sua vez!", 'warning');
+        DOM.starterGrid.appendChild(card);
+    });
+    
     // Render selected list
-    renderSelectedList(players); }
+    renderSelectedList(players);
 }
 
 /**
  * Create a Pokemon card element
  */
-function createPokemonCard(pokemon, isSelected = false, isClickable = false) {        action: 'catch',
-    const card = document.createElement('div');ball: useUltraBall ? 'true' : 'false'
+function createPokemonCard(pokemon, isSelected = false, isClickable = false) {
+    const card = document.createElement('div');
     card.className = 'pokemon-card';
     if (isSelected) card.classList.add('disabled');
     if (isClickable) card.classList.add('clickable');
-     Animation and state update handled via SSE for all players
-    card.innerHTML = `-pokemon delay handling
-        <div class="pokemon-sprite">lt = result.result;
+    
+    card.innerHTML = `
+        <div class="pokemon-sprite">
             <img src="${pokemon.sprite_url}" alt="${pokemon.name}" 
-                 onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">ror');
+                 onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">
         </div>
-        <div class="pokemon-name">${pokemon.name}</div>rror) {
-        <div class="pokemon-types">ting catch:', error);
-            <span class="type-badge ${pokemon.type_defense}">${pokemon.type_defense}</span>tar capturar', 'error');
+        <div class="pokemon-name">${pokemon.name}</div>
+        <div class="pokemon-types">
+            <span class="type-badge ${pokemon.type_defense}">${pokemon.type_defense}</span>
             ${pokemon.type_attack !== pokemon.type_defense ? 
-                `<span class="type-badge ${pokemon.type_attack}">${pokemon.type_attack}</span>` : ''}}
-        </div>se);
+                `<span class="type-badge ${pokemon.type_attack}">${pokemon.type_attack}</span>` : ''}
+        </div>
         <div class="pokemon-stats">
             <div class="stat">
                 <span class="stat-label">HP</span>
-                <span class="stat-value">${pokemon.base_hp}</span>e animation next to wild Pokemon (triggered via SSE for all players)
-            </div>- The final dice value (0-5)
-            <div class="stat">successful
+                <span class="stat-value">${pokemon.base_hp}</span>
+            </div>
+            <div class="stat">
                 <span class="stat-label">ATK</span>
                 <span class="stat-value">${pokemon.base_attack}</span>
-            </div> showInlineDiceAnimation(finalValue, caught, usedUltraBall) {
-            <div class="stat">
-                <span class="stat-label">SPD</span> (usedUltraBall) {
-                <span class="stat-value">${pokemon.base_speed}</span>    await showUltraBallAnimation();
             </div>
-        </div>   }
-        ${isSelected ? '<div class="selected-overlay">ESCOLHIDO</div>' : ''}    
-    `; const diceContainer = document.getElementById('catch-dice-animation');
-    '.dice-face');
-    return card; 
-}eturn;
+            <div class="stat">
+                <span class="stat-label">SPD</span>
+                <span class="stat-value">${pokemon.base_speed}</span>
+            </div>
+        </div>
+        ${isSelected ? '<div class="selected-overlay">ESCOLHIDO</div>' : ''}
+    `;
+    
+    return card;
+}
 
-/**// Reset state
- * Render the list of players and their selectionscatch-dice';
+/**
+ * Render the list of players and their selections
  */
 function renderSelectedList(players) {
-    DOM.selectedList.innerHTML = '';Container.classList.remove('hidden');
+    DOM.selectedList.innerHTML = '';
     
     players.forEach(player => {
-        const item = document.createElement('div');t diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+        const item = document.createElement('div');
         item.className = 'selected-item';
-        g for 500ms (faster)
+        
         const avatarEmoji = AVATARS[player.avatar_id - 1] || '😎';
         const isMe = player.id == GameState.playerId;
         
@@ -2041,64 +2057,64 @@ function renderSelectedList(players) {
                 <div class="mini-avatar">${avatarEmoji}</div>
                 <span class="${isMe ? 'is-you' : ''}">${escapeHtml(player.player_name)}</span>
                 <span>→</span>
-                <img src="${player.sprite_url}" alt="${player.pokemon_name}" how random dice face
-                     style="width: 32px; height: 32px;" diceFaces[Math.floor(Math.random() * 6)];
+                <img src="${player.sprite_url}" alt="${player.pokemon_name}" 
+                     style="width: 32px; height: 32px;"
                      onerror="this.style.display='none'">
                 <span>${player.pokemon_name}</span>
             `;
-        } else {  clearInterval(rollTimer);
-            item.innerHTML = `       resolve();
-                <div class="mini-avatar">${avatarEmoji}</div>    }
+        } else {
+            item.innerHTML = `
+                <div class="mini-avatar">${avatarEmoji}</div>
                 <span class="${isMe ? 'is-you' : ''}">${escapeHtml(player.player_name)}</span>
                 <span class="waiting">Aguardando...</span>
-            `;   
-        }    // Show final result
-         diceFace.textContent = diceFaces[finalValue];
-        DOM.selectedList.appendChild(item);.add('stopped');
-    }); 
+            `;
+        }
+        
+        DOM.selectedList.appendChild(item);
+    });
 }
 
-/**    diceContainer.classList.add('success');
- * Select a starter Pokemone {
+/**
+ * Select a starter Pokemon
  */
 async function selectStarter(pokemonId) {
     setLoading(true);
-     showing result for a moment
-    try {t new Promise(resolve => setTimeout(resolve, 600));
+    
+    try {
         const result = await apiCall(API.pokemon, {
             action: 'select_starter',
-            pokemon_id: pokemonIdainer.classList.add('hidden');
+            pokemon_id: pokemonId
         });
         
         if (result.success) {
             showToast(`Você escolheu ${result.pokemon.name}!`, 'success');
             
-            if (result.phase_complete) {ion() {
-                showToast('Todos os jogadores escolheram! Iniciando fase de captura...', 'info');all-animation');
+            if (result.phase_complete) {
+                showToast('Todos os jogadores escolheram! Iniciando fase de captura...', 'info');
                 // Transition directly — don't rely solely on WS/SSE event
-                // The WS/SSE event may also arrive, but handleGameStateChangereturn;
+                // The WS/SSE event may also arrive, but handleGameStateChange
                 // will ignore it if we're already on the catching screen
                 setTimeout(() => {
-                    handleGameStateChange('catching');.classList.remove('active');
-                }, 1500);assList.remove('hidden');
+                    handleGameStateChange('catching');
+                }, 1500);
             } else {
-                // Refresh selection stateigger animation
-                await refreshSelectionState(); ensure CSS reset takes effect
-            };
+                // Refresh selection state
+                await refreshSelectionState();
+            }
         } else {
             showToast(result.error || 'Falha ao selecionar inicial', 'error');
-        }// Wait for animation to complete (1 second)
-    } catch (error) {resolve => setTimeout(resolve, 1000));
-        console.error('Error selecting starter:', error);   
-        showToast('Erro ao selecionar inicial', 'error');    // Hide after animation
-    } ultraBall.classList.add('hidden');
-    move('active');
+        }
+    } catch (error) {
+        console.error('Error selecting starter:', error);
+        showToast('Erro ao selecionar inicial', 'error');
+    }
+    
     setLoading(false);
 }
 
 /**
  * Refresh selection state
- */mon() {
+ */
 async function refreshSelectionState() {
     try {
         const result = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
@@ -2107,54 +2123,54 @@ async function refreshSelectionState() {
             // Check if game state has changed (e.g., initial → catching)
             // This handles the case where a WS/SSE phase_changed event was missed
             if (result.game_state && result.game_state !== 'initial') {
-                console.log(`Selection polling detected phase change to: ${result.game_state}`);ing, { action: 'attack' });
+                console.log(`Selection polling detected phase change to: ${result.game_state}`);
                 handleGameStateChange(result.game_state);
                 return;
-            }age} damage!`;
-            f (result.type_multiplier > 1) {
-            GameState.selectionState = result;       msg += ' Super effective!';
-            // Only render if starters have been loaded (result.type_multiplier < 1) {
+            }
+            
+            GameState.selectionState = result;
+            // Only render if starters have been loaded
             if (GameState.starters) {
-                renderStarterSelection();       }
-            }           
-        }            if (result.defeated) {
-    } catch (error) {             msg += ` The wild Pokémon fled!`;
+                renderStarterSelection();
+            }
+        }
+    } catch (error) {
         console.error('Error refreshing selection state:', error);
-    }         
+    }
 }
-Seu Pokémon evoluiu para ${result.evolved.to}!`, 'success');
+
 /**
  * Start polling for selection state updates (fallback for missed WS events)
  */
 function startSelectionPolling() {
-    stopSelectionPolling();d via SSE
-    GameState.selectionPollInterval = setInterval(() => { else {
-        if (GameState.currentScreen === 'initial') {howToast(result.error || 'Ataque falhou', 'error');
-            refreshSelectionState();       }
-        } else {    } catch (error) {
-            stopSelectionPolling();     console.error('Error attacking:', error);
-        }ar', 'error');
-    }, 3000); }
+    stopSelectionPolling();
+    GameState.selectionPollInterval = setInterval(() => {
+        if (GameState.currentScreen === 'initial') {
+            refreshSelectionState();
+        } else {
+            stopSelectionPolling();
+        }
+    }, 3000);
 }
 
 /**
  * Stop selection phase polling
  */
-function stopSelectionPolling() {* Add a message to the catching log
-    if (GameState.selectionPollInterval) { */
-        clearInterval(GameState.selectionPollInterval);ction addCatchingLog(message, type = 'info') {
+function stopSelectionPolling() {
+    if (GameState.selectionPollInterval) {
+        clearInterval(GameState.selectionPollInterval);
         GameState.selectionPollInterval = null;
     }
 }
 
-/** entry.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;
+/**
  * Start a general-purpose game state watchdog.
- * Periodically checks the server's current game_state and triggersappendChild(entry);
- * phase transitions if a WS/SSE event was missed.ollHeight;
+ * Periodically checks the server's current game_state and triggers
+ * phase transitions if a WS/SSE event was missed.
  * This is a safety net — real-time events should handle most transitions.
  */
-function startGameStateWatchdog() {hildren.length > 50) {
-    stopGameStateWatchdog();gLogMessages.removeChild(DOM.catchingLogMessages.firstChild);
+function startGameStateWatchdog() {
+    stopGameStateWatchdog();
     GameState.gameStateWatchdogInterval = setInterval(async () => {
         // Only run if we're in an active game
         if (!GameState.roomCode) {
@@ -2162,171 +2178,294 @@ function startGameStateWatchdog() {hildren.length > 50) {
             return;
         }
         
-        try {turn;
+        try {
             const result = await apiCall(`${API.room}?action=get_room&room_code=${GameState.roomCode}`, {}, 'GET');
             if (result.success && result.room) {
                 const serverState = result.room.game_state;
-                // If the server's game state differs from ours, transitionDOM.btnCatch?.disabled) attemptCatch(false);
-                if (serverState && serverState !== GameState.gameState) {reak;
+                // If the server's game state differs from ours, transition
+                if (serverState && serverState !== GameState.gameState) {
                     console.log(`[Watchdog] Detected state mismatch: local=${GameState.gameState}, server=${serverState}. Transitioning...`);
                     GameState.players = result.players || GameState.players;
                     handleGameStateChange(serverState);
-                }ase 'a':
-            }ed) attackWildPokemon();
-        } catch (error) {           break;
-            // Silently ignore — this is a background safety check    }
+                }
+            }
+        } catch (error) {
+            // Silently ignore — this is a background safety check
             console.debug('[Watchdog] Poll error:', error);
         }
-    }, 5000); // Check every 5 seconds============================================
+    }, 5000); // Check every 5 seconds
 }
-=
+
 /**
  * Stop the game state watchdog
- */WN PHASE FUNCTIONS
-function stopGameStateWatchdog() {/ ============================================
+ */
+function stopGameStateWatchdog() {
     if (GameState.gameStateWatchdogInterval) {
         clearInterval(GameState.gameStateWatchdogInterval);
         GameState.gameStateWatchdogInterval = null;
     }
-}const TownState = {
- playerMoney: 0,
+}
+
 // ============================================
-// CATCHING PHASE FUNCTIONS hasMegaStone: false,
+// COUNTDOWN TIMER FUNCTIONS
 // ============================================
 
-/**activeSlot: 0,
- * Initialize the catching phasese,
+/**
+ * Start the catching phase countdown timer (5 seconds per turn).
+ * Only runs on the current player's client. Auto-catches if time runs out.
+ */
+function startCatchingTimer() {
+    stopCatchingTimer();
+    
+    // Only start the timer if it's our turn and there's a wild Pokemon
+    if (!GameState.isMyTurn || !GameState.wildPokemon) return;
+    
+    GameState.catchingTimerSeconds = 5;
+    
+    const timerEl = document.getElementById('catching-countdown');
+    const timerValueEl = document.getElementById('catching-timer-value');
+    if (!timerEl || !timerValueEl) return;
+    
+    // Show timer and set initial value
+    timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
+    timerValueEl.textContent = GameState.catchingTimerSeconds;
+    
+    GameState.catchingTimerInterval = setInterval(() => {
+        GameState.catchingTimerSeconds--;
+        timerValueEl.textContent = Math.max(0, GameState.catchingTimerSeconds);
+        
+        // Visual urgency
+        if (GameState.catchingTimerSeconds <= 2) {
+            timerEl.classList.remove('timer-warning');
+            timerEl.classList.add('timer-critical');
+        } else if (GameState.catchingTimerSeconds <= 3) {
+            timerEl.classList.add('timer-warning');
+        }
+        
+        // Time's up — auto-catch
+        if (GameState.catchingTimerSeconds <= 0) {
+            stopCatchingTimer();
+            console.log('[Timer] Catching timer expired — auto-catching');
+            // Only auto-catch if it's still our turn and there's a wild Pokemon
+            if (GameState.isMyTurn && GameState.wildPokemon && !GameState.catchAnimationInProgress) {
+                attemptCatch(false);
+            }
+        }
+    }, 1000);
+}
+
+/**
+ * Stop the catching phase countdown timer and hide the display.
+ */
+function stopCatchingTimer() {
+    if (GameState.catchingTimerInterval) {
+        clearInterval(GameState.catchingTimerInterval);
+        GameState.catchingTimerInterval = null;
+    }
+    GameState.catchingTimerSeconds = 0;
+    
+    const timerEl = document.getElementById('catching-countdown');
+    if (timerEl) {
+        timerEl.classList.add('hidden');
+        timerEl.classList.remove('timer-warning', 'timer-critical');
+    }
+}
+
+/**
+ * Start the town phase countdown timer (60 seconds).
+ * Runs on all clients. When it hits 0, the host auto-readies everyone.
+ */
+function startTownTimer() {
+    stopTownTimer();
+    
+    GameState.townTimerSeconds = 60;
+    
+    const timerEl = document.getElementById('town-countdown');
+    const timerValueEl = document.getElementById('town-timer-value');
+    if (!timerEl || !timerValueEl) return;
+    
+    // Show timer and set initial value
+    timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
+    timerValueEl.textContent = GameState.townTimerSeconds;
+    
+    GameState.townTimerInterval = setInterval(() => {
+        GameState.townTimerSeconds--;
+        timerValueEl.textContent = Math.max(0, GameState.townTimerSeconds);
+        
+        // Visual urgency
+        if (GameState.townTimerSeconds <= 10) {
+            timerEl.classList.remove('timer-warning');
+            timerEl.classList.add('timer-critical');
+        } else if (GameState.townTimerSeconds <= 20) {
+            timerEl.classList.add('timer-warning');
+        }
+        
+        // Time's up — auto-ready this player
+        if (GameState.townTimerSeconds <= 0) {
+            stopTownTimer();
+            console.log('[Timer] Town timer expired — auto-readying');
+            // If we're not already ready, toggle ready
+            if (!TownState.isReady) {
+                toggleTownReady();
+            }
+        }
+    }, 1000);
+}
+
+/**
+ * Stop the town phase countdown timer and hide the display.
+ */
+function stopTownTimer() {
+    if (GameState.townTimerInterval) {
+        clearInterval(GameState.townTimerInterval);
+        GameState.townTimerInterval = null;
+    }
+    GameState.townTimerSeconds = 0;
+    
+    const timerEl = document.getElementById('town-countdown');
+    if (timerEl) {
+        timerEl.classList.add('hidden');
+        timerEl.classList.remove('timer-warning', 'timer-critical');
+    }
+}
+
+// ============================================
+// CATCHING PHASE FUNCTIONS
+// ============================================
+
+/**
+ * Initialize the catching phase
  */
 async function initCatchingPhase() {
-    console.log('Initializing catching phase...');electedPokemonForMega: null,
-    shopPrices: {
+    console.log('Initializing catching phase...');
+    
     // Clear log
-    if (DOM.catchingLogMessages) {    evo_soda: 1,
+    if (DOM.catchingLogMessages) {
         DOM.catchingLogMessages.innerHTML = '';
     }
-    ;
+    
     addCatchingLog('Bem-vindo à Fase de Captura!', 'system');
     
     // Load initial state
     await refreshCatchingState();
 }
-le.log('Initializing Town Phase...');
+
 /**
- * Refresh catching phase state from serverhow leave game button
- */st.remove('hidden');
+ * Refresh catching phase state from server
+ */
 async function refreshCatchingState() {
     try {
         const result = await apiCall(`${API.catching}?action=get_state&room_code=${GameState.roomCode}`, {}, 'GET');
         
         if (result.success) {
-            // Check if game state has changed (e.g., catching → town));
+            // Check if game state has changed (e.g., catching → town)
             // This handles the case where a WS/SSE phase_changed event was missed
             if (result.room.game_state && result.room.game_state !== 'catching') {
                 console.log(`Catching state polling detected phase change to: ${result.room.game_state}`);
                 handleGameStateChange(result.room.game_state);
                 return;
             }
-            buttons
-            GameState.catchingState = result;tElementById('btn-buy-ultra');
+            
+            GameState.catchingState = result;
             GameState.wildPokemon = result.wild_pokemon;
-            GameState.currentRoute = result.room.current_route || 1;a-stone');
-            GameState.turnsPerPlayer = result.room.turns_per_player || 8;nTownReady = document.getElementById('btn-town-ready');
+            GameState.currentRoute = result.room.current_route || 1;
+            GameState.turnsPerPlayer = result.room.turns_per_player || 8;
             
             // Track my turns taken
-            const myPlayer = result.players.find(p => p.id == GameState.playerId);oSoda?.addEventListener('click', buyEvoSoda);
-            GameState.myTurnsTaken = myPlayer?.turns_taken || 0;('click', buyMegaStone);
-            lick', toggleTownReady);
+            const myPlayer = result.players.find(p => p.id == GameState.playerId);
+            GameState.myTurnsTaken = myPlayer?.turns_taken || 0;
+            
             // Check if it's my turn
             GameState.isMyTurn = myPlayer && myPlayer.player_number == result.room.current_player_turn;
             
             // Update all UI elements
             renderCatchingUI(result);
-            efreshTownState() {
+            
             // Spawn wild Pokemon if needed and it's my turn and I'm first
-            if (!result.wild_pokemon && GameState.isMyTurn && GameState.isHost) {onst result = await apiCall(
-                await spawnWildPokemon();.php?action=get_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
+            if (!result.wild_pokemon && GameState.isMyTurn && GameState.isHost) {
+                await spawnWildPokemon();
             }
-        } else {       'GET'
-            console.error('Failed to get catching state:', result.error);       );
-        }        
-    } catch (error) {     if (!result.success) {
-        console.error('Error refreshing catching state:', error); estado da cidade', 'error');
-    }         return;
+        } else {
+            console.error('Failed to get catching state:', result.error);
+        }
+    } catch (error) {
+        console.error('Error refreshing catching state:', error);
+    }
 }
 
 /**
- * Render all catching phase UI elementsyer.money;
- */    TownState.ultraBalls = result.player.ultra_balls;
-function renderCatchingUI(data) {aStone = result.player.has_mega_stone || false;
-    const room = data.room;gaStone = result.player.used_mega_stone || false;
+ * Render all catching phase UI elements
+ */
+function renderCatchingUI(data) {
+    const room = data.room;
     const players = data.players;
-    const wildPokemon = data.wild_pokemon;   TownState.activeSlot = result.player.active_pokemon_slot;
-    .player.is_ready;
+    const wildPokemon = data.wild_pokemon;
+    
     // Update route info
-    if (DOM.routeName) {TownState.shopPrices;
-        DOM.routeName.textContent = room.route_name || `Rota ${room.current_route}`;;
+    if (DOM.routeName) {
+        DOM.routeName.textContent = room.route_name || `Rota ${room.current_route}`;
     }
-    if (DOM.encountersRemaining) {   // Render UI
+    if (DOM.encountersRemaining) {
         // Show current cycle / total turns per player
         const currentCycle = room.current_cycle || 1;
-        const turnsPerPlayer = room.turns_per_player || 8; catch (error) {
-        DOM.encountersRemaining.textContent = `Ciclo: ${currentCycle}/${turnsPerPlayer}`;    console.error('Error loading town state:', error);
-    }r dados da cidade', 'error');
+        const turnsPerPlayer = room.turns_per_player || 8;
+        DOM.encountersRemaining.textContent = `Ciclo: ${currentCycle}/${turnsPerPlayer}`;
+    }
     if (DOM.routeProgress) {
         DOM.routeProgress.textContent = `Rota ${room.current_route}/5`;
     }
     
-    // Update wild Pokemon displayender Town UI
+    // Update wild Pokemon display
     renderWildPokemon(wildPokemon);
     
-    // Update turn indicator// Update header info
-    renderTurnIndicator(players, room.current_player_turn);cument.getElementById('town-player-money');
-    oute-indicator');
-    // Update action buttons   const ultraCount = document.getElementById('town-ultra-count');
-    updateActionButtons(wildPokemon);    
-     if (moneyDisplay) moneyDisplay.textContent = `R$ ${TownState.playerMoney}`;
-    // Update players panelndicator.textContent = `Rota ${GameState.currentRoute}/8`;
-    renderPlayersPanel(players, room.current_player_turn); if (ultraCount) ultraCount.textContent = TownState.ultraBalls;
+    // Update turn indicator
+    renderTurnIndicator(players, room.current_player_turn);
+    
+    // Update action buttons
+    updateActionButtons(wildPokemon);
+    
+    // Update players panel
+    renderPlayersPanel(players, room.current_player_turn);
 }
 
-/**const btnBuyUltra = document.getElementById('btn-buy-ultra');
- * Render wild Pokemon displayoSoda = document.getElementById('btn-buy-evo-soda');
- */uy-mega-stone');
+/**
+ * Render wild Pokemon display
+ */
 function renderWildPokemon(pokemon) {
-    if (!DOM.wildPokemonDisplay) return;btnBuyUltra) {
-    wnState.playerMoney < TownState.shopPrices.ultra_ball;
+    if (!DOM.wildPokemonDisplay) return;
+    
     if (pokemon) {
         DOM.wildPokemonDisplay.classList.remove('hidden');
-        DOM.wildPokemonPlaceholder?.classList.add('hidden');/ Check if active Pokemon can gain EXP
-        State.team.find(p => p.slot === TownState.activeSlot);
-        if (DOM.wildPokemonImg) {an_evolve;
-            DOM.wildPokemonImg.src = pokemon.sprite_url || 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png';tnBuyEvoSoda.disabled = TownState.playerMoney < TownState.shopPrices.evo_soda || !canGainExp;
+        DOM.wildPokemonPlaceholder?.classList.add('hidden');
+        
+        if (DOM.wildPokemonImg) {
+            DOM.wildPokemonImg.src = pokemon.sprite_url || 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png';
             DOM.wildPokemonImg.alt = pokemon.name;
         }
-        if (DOM.wildPokemonName) {n Mega Evolve
-            DOM.wildPokemonName.textContent = pokemon.name;State.activeSlot);
+        if (DOM.wildPokemonName) {
+            DOM.wildPokemonName.textContent = pokemon.name;
         }
-                                    activePokemon.has_mega && 
-        // Defense type (always shown)                             activePokemon.mega_evolution_id && 
+        
+        // Defense type (always shown)
         if (DOM.wildPokemonTypeDef) {
             DOM.wildPokemonTypeDef.textContent = pokemon.type_defense;
-            DOM.wildPokemonTypeDef.className = `type-badge ${pokemon.type_defense}`;Pokemon can mega evolve
-        }mega_stone && 
+            DOM.wildPokemonTypeDef.className = `type-badge ${pokemon.type_defense}`;
+        }
         
         // Attack type (only shown if different from defense)
-        if (DOM.wildPokemonTypeAtk) {      canActiveMegaEvolve;
+        if (DOM.wildPokemonTypeAtk) {
             if (pokemon.type_attack && pokemon.type_attack !== pokemon.type_defense) {
                 DOM.wildPokemonTypeAtk.textContent = pokemon.type_attack;
-                DOM.wildPokemonTypeAtk.className = `type-badge ${pokemon.type_attack}`;/ Update button text based on state
-                DOM.wildPokemonTypeAtk.classList.remove('hidden');if (TownState.usedMegaStone) {
-            } else {uyMegaStone.innerHTML = '<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Stone</span><span class="shop-item-price">USADO</span>';
-                DOM.wildPokemonTypeAtk.classList.add('hidden'); = 'Você já usou sua Mega Stone nesta partida';
+                DOM.wildPokemonTypeAtk.className = `type-badge ${pokemon.type_attack}`;
+                DOM.wildPokemonTypeAtk.classList.remove('hidden');
+            } else {
+                DOM.wildPokemonTypeAtk.classList.add('hidden');
             }
-        }   btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Evoluir ${activePokemon.name}</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;
-         = `Mega Evoluir ${activePokemon.name} → ${activePokemon.mega_name}`;
+        }
+        
         // Stats
-        if (DOM.wildPokemonAtk) {   btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Stone</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;
-            DOM.wildPokemonAtk.textContent = pokemon.base_attack || '?';    btnBuyMegaStone.title = 'Selecione um Pokémon com Mega Evolução como ativo';
+        if (DOM.wildPokemonAtk) {
+            DOM.wildPokemonAtk.textContent = pokemon.base_attack || '?';
         }
         if (DOM.wildPokemonSpd) {
             DOM.wildPokemonSpd.textContent = pokemon.base_speed || '?';
@@ -2336,124 +2475,135 @@ function renderWildPokemon(pokemon) {
         const hpPercent = Math.max(0, (pokemon.current_hp / pokemon.max_hp) * 100);
         if (DOM.wildHpBar) {
             DOM.wildHpBar.style.width = `${hpPercent}%`;
-            DOM.wildHpBar.className = 'hp-bar'; ready button
-            if (hpPercent <= 25) {eReadyButton();
+            DOM.wildHpBar.className = 'hp-bar';
+            if (hpPercent <= 25) {
                 DOM.wildHpBar.classList.add('hp-low');
             } else if (hpPercent <= 50) {
                 DOM.wildHpBar.classList.add('hp-medium');
-            }r Town Team Grid
+            }
         }
         if (DOM.wildHpText) {
-            DOM.wildHpText.textContent = `${pokemon.current_hp}/${pokemon.max_hp}`;d');
-        }name');
+            DOM.wildHpText.textContent = `${pokemon.current_hp}/${pokemon.max_hp}`;
+        }
         
         // Display catch rate
         if (DOM.wildCatchRate) {
             const catchRate = pokemon.catch_rate || 30;
             DOM.wildCatchRate.textContent = `${catchRate}%`;
             // Color-code: green if high, yellow if medium, red if low
-            DOM.wildCatchRate.className = 'catch-rate-value';n Team Data:', TownState.team);
+            DOM.wildCatchRate.className = 'catch-rate-value';
             if (catchRate >= 60) {
-                DOM.wildCatchRate.classList.add('catch-rate-high'); 6 slots (max team size)
-            } else if (catchRate >= 35) {let i = 0; i < 6; i++) {
-                DOM.wildCatchRate.classList.add('catch-rate-medium');find(p => p.slot === i);
+                DOM.wildCatchRate.classList.add('catch-rate-high');
+            } else if (catchRate >= 35) {
+                DOM.wildCatchRate.classList.add('catch-rate-medium');
             } else {
-                DOM.wildCatchRate.classList.add('catch-rate-low');lot.className = 'town-pokemon-slot';
+                DOM.wildCatchRate.classList.add('catch-rate-low');
             }
         }
         if (DOM.wildCatchRateDisplay) {
-            DOM.wildCatchRateDisplay.classList.remove('hidden');on.evolution_stage;
+            DOM.wildCatchRateDisplay.classList.remove('hidden');
         }
-    } else {   const expDisplay = pokemon.exp || 0;
-        DOM.wildPokemonDisplay.classList.add('hidden');       const canMegaEvolve = pokemon.has_mega && pokemon.mega_evolution_id && !pokemon.is_mega;
-        DOM.wildPokemonPlaceholder?.classList.remove('hidden');           const isMega = pokemon.is_mega;
-        if (DOM.wildCatchRateDisplay) {            
-            DOM.wildCatchRateDisplay.classList.add('hidden');         // Ensure we have a valid sprite URL
-        }Url = pokemon.sprite_url || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.pokemon_id}.png`;
-    }         console.log(`Pokemon ${pokemon.name} (ID: ${pokemon.pokemon_id}): sprite_url = ${spriteUrl}`);
+    } else {
+        DOM.wildPokemonDisplay.classList.add('hidden');
+        DOM.wildPokemonPlaceholder?.classList.remove('hidden');
+        if (DOM.wildCatchRateDisplay) {
+            DOM.wildCatchRateDisplay.classList.add('hidden');
+        }
+    }
 }
 
-/**        if (isMega) slot.classList.add('mega-evolved');
- * Render turn indicatoregaStone) slot.classList.add('can-mega-evolve');
+/**
+ * Render turn indicator
  */
-function renderTurnIndicator(players, currentTurn) {e image element separately to add load/error handlers
-    const currentPlayer = players.find(p => p.player_number == currentTurn););
-           img.src = spriteUrl;
-    if (DOM.currentTurnName && currentPlayer) {        img.alt = pokemon.name;
-        DOM.currentTurnName.textContent = currentPlayer.id == GameState.playerId kemon-sprite';
-            ? 'Sua' nsole.log(`✓ Image loaded: ${pokemon.name}`);
+function renderTurnIndicator(players, currentTurn) {
+    const currentPlayer = players.find(p => p.player_number == currentTurn);
+    
+    if (DOM.currentTurnName && currentPlayer) {
+        DOM.currentTurnName.textContent = currentPlayer.id == GameState.playerId 
+            ? 'Sua' 
             : `Vez de ${currentPlayer.player_name}`;
-    }console.error(`✗ Image FAILED: ${pokemon.name} - ${spriteUrl}`);
-    /sprites/master/sprites/pokemon/0.png';
-    if (DOM.catchingTurnIndicator) {   };
-        if (GameState.isMyTurn) {       
-            DOM.catchingTurnIndicator.classList.add('your-turn');           slot.appendChild(img);
-        } else {            
-            DOM.catchingTurnIndicator.classList.remove('your-turn');         // Add Mega badge if this Pokemon is mega evolved
+    }
+    
+    if (DOM.catchingTurnIndicator) {
+        if (GameState.isMyTurn) {
+            DOM.catchingTurnIndicator.classList.add('your-turn');
+        } else {
+            DOM.catchingTurnIndicator.classList.remove('your-turn');
         }
-    }             const megaBadge = document.createElement('span');
-}mon-mega-badge';
+    }
+    
+    // Start/stop the catching countdown timer based on whose turn it is
+    if (GameState.isMyTurn && GameState.wildPokemon) {
+        // Only restart the timer if it's not already running
+        // (avoids resetting the timer on every state refresh within the same turn)
+        if (!GameState.catchingTimerInterval) {
+            startCatchingTimer();
+        }
+    } else {
+        stopCatchingTimer();
+    }
+}
 
 /**
- * Update action buttons state        }
+ * Update action buttons state
  */
-function updateActionButtons(wildPokemon) { indicator if player has mega stone and Pokemon can mega evolve
-    const canAct = GameState.isMyTurn && wildPokemon;TownState.hasMegaStone) {
-    const actionButtonsContainer = document.getElementById('player-action-buttons');span');
-    megaIndicator.className = 'pokemon-mega-indicator';
+function updateActionButtons(wildPokemon) {
+    const canAct = GameState.isMyTurn && wildPokemon;
+    const actionButtonsContainer = document.getElementById('player-action-buttons');
+    
     // Show/hide action buttons based on turn
-    if (actionButtonsContainer) {       megaIndicator.title = `Mega Evolução disponível → ${pokemon.mega_name}`;
-        if (GameState.isMyTurn) {           slot.appendChild(megaIndicator);
-            actionButtonsContainer.classList.remove('hidden');        }
+    if (actionButtonsContainer) {
+        if (GameState.isMyTurn) {
+            actionButtonsContainer.classList.remove('hidden');
         } else {
             actionButtonsContainer.classList.add('hidden');
-        });
+        }
     }
-    = expDisplay;
+    
     if (DOM.btnCatch) {
         DOM.btnCatch.disabled = !canAct;
         // Update catch button text to show current catch rate
-        const btnText = DOM.btnCatch.querySelector('.btn-text');Element('span');
-        if (btnText && wildPokemon) {   sellBadge.className = 'pokemon-sell-badge';
-            const catchRate = wildPokemon.catch_rate || 30;       sellBadge.textContent = `$${sellPrice}`;
-            btnText.textContent = `Capturar (${catchRate}%)`;(sellBadge);
+        const btnText = DOM.btnCatch.querySelector('.btn-text');
+        if (btnText && wildPokemon) {
+            const catchRate = wildPokemon.catch_rate || 30;
+            btnText.textContent = `Capturar (${catchRate}%)`;
         } else if (btnText) {
-            btnText.textContent = 'Capturar'; ''}\nHP: ${pokemon.hp} | ATQ: ${pokemon.attack} | VEL: ${pokemon.speed}`;
-        }pDisplay}/5`;
-    }oluir → ${pokemon.mega_name}`;
-    if (DOM.btnUltraCatch) {der por R$${sellPrice}`;
+            btnText.textContent = 'Capturar';
+        }
+    }
+    if (DOM.btnUltraCatch) {
         // Check if player has ultra balls
-        const myPlayer = GameState.catchingState?.players?.find(p => p.id == GameState.playerId);   
-        const ultraBalls = myPlayer?.ultra_balls || 0;       slot.addEventListener('click', () => handleTownPokemonClick(pokemon, i));
+        const myPlayer = GameState.catchingState?.players?.find(p => p.id == GameState.playerId);
+        const ultraBalls = myPlayer?.ultra_balls || 0;
         DOM.btnUltraCatch.disabled = !canAct || ultraBalls <= 0;
         if (DOM.ultraBallCount) {
             DOM.ultraBallCount.textContent = `${ultraBalls}`;
         }
     }
-    if (DOM.btnAttack) {   grid.appendChild(slot);
-        // Check if player has an active Pokemon   }
-        const myPlayer = GameState.catchingState?.players?.find(p => p.id == GameState.playerId);    
-        const hasActivePokemon = myPlayer?.active_pokemon; // Update active Pokemon name
-        DOM.btnAttack.disabled = !canAct || !hasActivePokemon;slot === TownState.activeSlot);
-    } if (activeInfo) {
-}tivePokemon.name : '---';
+    if (DOM.btnAttack) {
+        // Check if player has an active Pokemon
+        const myPlayer = GameState.catchingState?.players?.find(p => p.id == GameState.playerId);
+        const hasActivePokemon = myPlayer?.active_pokemon;
+        DOM.btnAttack.disabled = !canAct || !hasActivePokemon;
+    }
+}
 
 /**
  * Render players panel with their Pokemon and status
  */
-function renderPlayersPanel(players, currentTurn) { in the town team grid
+function renderPlayersPanel(players, currentTurn) {
     if (!DOM.catchingPlayersPanel) return;
     
     DOM.catchingPlayersPanel.innerHTML = '';
     
-    players.forEach(player => {kemon
-        const card = document.createElement('div');if (TownState.team.length > 1) {
+    players.forEach(player => {
+        const card = document.createElement('div');
         card.className = 'catching-player-card';
         if (player.player_number == currentTurn) card.classList.add('active-turn');
-        const isCurrentPlayer = player.id == GameState.playerId;    showToast('Não pode vender seu último Pokémon!', 'warning');
+        const isCurrentPlayer = player.id == GameState.playerId;
         if (isCurrentPlayer) card.classList.add('is-you');
         
-        const avatarEmoji = AVATARS[player.avatar_id - 1] || '😎';on
+        const avatarEmoji = AVATARS[player.avatar_id - 1] || '😎';
         const team = player.team || [];
         
         // Build team display - show all Pokemon sprites with EXP (only if they can evolve)
@@ -2469,53 +2619,53 @@ function renderPlayersPanel(players, currentTurn) { in the town team grid
                 const statsTitle = `${pokemon.name}${isActive ? ' (Ativo)' : ''}\nHP: ${pokemon.base_hp} | ATQ: ${pokemon.base_attack} | VEL: ${pokemon.base_speed}${expInfo}`;
                 teamHtml += `
                     <div class="team-pokemon-slot ${isActive ? 'active' : ''} ${canClick ? 'clickable' : ''}" 
-                         title="${statsTitle}".success) {
-                         ${canClick ? `data-pokemon-id="${pokemon.id}"` : ''}>nState.activeSlot = slot;
-                        <img src="${pokemon.sprite_url || ''}" alt="${pokemon.name}" class="team-pokemon-sprite" onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">essage, 'success');
+                         title="${statsTitle}"
+                         ${canClick ? `data-pokemon-id="${pokemon.id}"` : ''}>
+                        <img src="${pokemon.sprite_url || ''}" alt="${pokemon.name}" class="team-pokemon-sprite" onerror="this.src='https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png'">
                         ${canEvolve ? `<span class="pokemon-exp-badge">${expDisplay}</span>` : ''}
                     </div>
-                `;howToast(result.error || 'Falha ao trocar Pokémon', 'error');
+                `;
             });
-            // Add empty slotsor) {
+            // Add empty slots
             for (let i = team.length; i < 6; i++) {
-                teamHtml += '<div class="team-pokemon-slot empty"></div>';howToast('Erro ao trocar Pokémon', 'error');
+                teamHtml += '<div class="team-pokemon-slot empty"></div>';
             }
             teamHtml += '</div>';
         } else {
             teamHtml = '<div class="no-pokemon">Nenhum Pokémon ainda</div>';
-        }sell confirmation modal
+        }
         
         const turnsTaken = player.turns_taken || 0;
         const turnsPerPlayer = GameState.turnsPerPlayer || 8;
         const turnsRemaining = Math.max(0, turnsPerPlayer - turnsTaken);
         
         card.innerHTML = `
-            <div class="catching-player-header">l
-                <span class="player-avatar-mini">${avatarEmoji}</span>ument.createElement('div');
+            <div class="catching-player-header">
+                <span class="player-avatar-mini">${avatarEmoji}</span>
                 <span class="player-name">${escapeHtml(player.player_name)}</span>
                 ${player.player_number == currentTurn ? '<span class="turn-badge">🎯</span>' : ''}
                 <span class="turns-badge" title="Turnos restantes">🔄 ${turnsRemaining}</span>
             </div>
-            ${teamHtml}nder Pokémon?</h3>
-            <div class="catching-player-stats">  <div class="sell-modal-pokemon">
-                <span class="stat-item" title="Insígnias">🎖️ ${player.badges || 0}</span>        <img src="${pokemon.sprite_url}" alt="${pokemon.name}">
+            ${teamHtml}
+            <div class="catching-player-stats">
+                <span class="stat-item" title="Insígnias">🎖️ ${player.badges || 0}</span>
                 <span class="stat-item" title="Dinheiro">💰 R$${player.money || 0}</span>
-                <span class="stat-item" title="Ultra Balls">◓ ${player.ultra_balls || 0}</span>ell-modal-price">R$ ${sellPrice}</span>
+                <span class="stat-item" title="Ultra Balls">◓ ${player.ultra_balls || 0}</span>
             </div>
         `;
-        m-sell">Vender</button>
-        // Add click handlers for the current player's Pokemon (except the active one)tn-secondary" id="btn-cancel-sell">Cancelar</button>
+        
+        // Add click handlers for the current player's Pokemon (except the active one)
         if (isCurrentPlayer) {
             card.querySelectorAll('.team-pokemon-slot.clickable:not(.active)').forEach(slot => {
                 slot.addEventListener('click', () => {
                     const pokemonId = slot.dataset.pokemonId;
-                    if (pokemonId) {ent.body.appendChild(overlay);
+                    if (pokemonId) {
                         setActivePokemon(pokemonId);
                     }
-                });ument.getElementById('btn-confirm-sell').addEventListener('click', confirmSellPokemon);
-            });   document.getElementById('btn-cancel-sell').addEventListener('click', closeSellModal);
-        }    overlay.addEventListener('click', (e) => {
-             if (e.target === overlay) closeSellModal();
+                });
+            });
+        }
+        
         DOM.catchingPlayersPanel.appendChild(card);
     });
 }
@@ -2523,53 +2673,56 @@ function renderPlayersPanel(players, currentTurn) { in the town team grid
 /**
  * Set a Pokemon as active
  */
-async function setActivePokemon(pokemonId) {verlay = document.getElementById('sell-modal-overlay');
-    try {overlay) overlay.remove();
-        const result = await apiCall(API.catching, { ForSell = null;
+async function setActivePokemon(pokemonId) {
+    try {
+        const result = await apiCall(API.catching, { 
             action: 'set_active',
             pokemon_id: pokemonId
         });
-        xecute Pokemon sale
+        
         if (result.success) {
-            showToast(result.message, 'success');ction confirmSellPokemon() {
-            // Refresh the catching state to update the UIownState.selectedPokemonForSell;
+            showToast(result.message, 'success');
+            // Refresh the catching state to update the UI
             await refreshCatchingState();
         } else {
-            showToast(result.error || 'Falha ao trocar Pokémon', 'error');loseSellModal();
-        }   
-    } catch (error) {    try {
-        console.error('Error setting active Pokemon:', error);     const result = await apiCall('api/town.php?action=sell_pokemon', {
+            showToast(result.error || 'Falha ao trocar Pokémon', 'error');
+        }
+    } catch (error) {
+        console.error('Error setting active Pokemon:', error);
         showToast('Falha ao trocar Pokémon', 'error');
-    }         player_id: GameState.playerId,
-}d
-);
+    }
+}
+
 /**
- * Spawn a wild Pokemon (called by first player/host when needed)if (result.success) {
- */message, 'success');
-async function spawnWildPokemon() {y;
-    try {n.name} por R$${result.sell_price}`, 'sell');
+ * Spawn a wild Pokemon (called by first player/host when needed)
+ */
+async function spawnWildPokemon() {
+    try {
         const result = await apiCall(API.catching, { action: 'spawn_wild' });
         
-        if (result.success) {   showToast(result.error || 'Falha ao vender Pokémon', 'error');
+        if (result.success) {
             GameState.wildPokemon = result.pokemon;
             renderWildPokemon(result.pokemon);
-        } else if (result.error !== 'Wild Pokemon already active') {   console.error('Error selling Pokemon:', error);
-            console.error('Failed to spawn wild Pokemon:', result.error);       showToast('Erro ao vender Pokémon', 'error');
-        }    }
+        } else if (result.error !== 'Wild Pokemon already active') {
+            console.error('Failed to spawn wild Pokemon:', result.error);
+        }
     } catch (error) {
         console.error('Error spawning wild Pokemon:', error);
     }
 }
 
 /**
- * Attempt to catch the wild Pokemonte.playerMoney < 3) {
- */   showToast('Dinheiro insuficiente!', 'warning');
-async function attemptCatch(useUltraBall = false) {    return;
+ * Attempt to catch the wild Pokemon
+ */
+async function attemptCatch(useUltraBall = false) {
     if (!GameState.isMyTurn || !GameState.wildPokemon) {
         showToast("Não é sua vez!", 'warning');
         return;
-    }ction=buy_ultra_ball', {
-    tate.roomCode,
+    }
+    
+    // Stop the countdown timer — player has acted
+    stopCatchingTimer();
+    
     setLoading(true);
     
     try {
@@ -2577,14 +2730,14 @@ async function attemptCatch(useUltraBall = false) {    return;
             action: 'catch',
             use_ultra_ball: useUltraBall ? 'true' : 'false'
         });
-        ownLogMessage('Comprou Ultra Ball!', 'purchase');
+        
         if (result.success) {
-            // Animation and state update handled via SSE for all players else {
-            // Just store the result for potential last-pokemon delay handling(result.error || 'Falha na compra', 'error');
+            // Animation and state update handled via SSE for all players
+            // Just store the result for potential last-pokemon delay handling
             GameState.lastCatchResult = result.result;
         } else {
-            showToast(result.error || 'Falha na captura', 'error');   console.error('Error buying ultra ball:', error);
-        }    showToast('Erro ao comprar Ultra Ball', 'error');
+            showToast(result.error || 'Falha na captura', 'error');
+        }
     } catch (error) {
         console.error('Error attempting catch:', error);
         showToast('Erro ao tentar capturar', 'error');
@@ -2593,33 +2746,33 @@ async function attemptCatch(useUltraBall = false) {    return;
     setLoading(false);
 }
 
-/**     showToast('Dinheiro insuficiente!', 'warning');
+/**
  * Show inline dice animation next to wild Pokemon (triggered via SSE for all players)
  * @param {number} finalValue - The final dice value (0-5)
  * @param {boolean} caught - Whether the catch was successful
  * @param {boolean} usedUltraBall - Whether an Ultra Ball was used
- */esult = await apiCall('api/town.php?action=buy_evo_soda', {
-async function showInlineDiceAnimation(finalValue, caught, usedUltraBall) {       room_code: GameState.roomCode,
-    // If Ultra Ball was used, show special animation instead of dice        player_id: GameState.playerId
+ */
+async function showInlineDiceAnimation(finalValue, caught, usedUltraBall) {
+    // If Ultra Ball was used, show special animation instead of dice
     if (usedUltraBall) {
         await showUltraBallAnimation();
-        return;    if (result.success) {
-    }ew_money;
-            showToast(result.message, 'success');
+        return;
+    }
+    
     const diceContainer = document.getElementById('catch-dice-animation');
     const diceFace = diceContainer?.querySelector('.dice-face');
-                addTownLogMessage(`🎉 ${result.evolved_to} evoluiu!`, 'evolution');
-    if (!diceContainer || !diceFace) return;se {
-    oda - +1 EXP!', 'purchase');
-    // Reset state        }
+    
+    if (!diceContainer || !diceFace) return;
+    
+    // Reset state
     diceContainer.className = 'catch-dice';
     
-    // Show dice    } else {
-    diceContainer.classList.remove('hidden');mpra', 'error');
+    // Show dice
+    diceContainer.classList.remove('hidden');
     
     // Dice face emojis for d6 (0-5 maps to ⚀-⚅)
-    const diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];r('Error buying evo soda:', error);
-        showToast('Erro ao comprar Evo Soda', 'error');
+    const diceFaces = ['⚀', '⚁', '⚂', '⚃', '⚄', '⚅'];
+    
     // Animate the dice rolling for 500ms (faster)
     const rollDuration = 500;
     const rollInterval = 50; // Change face every 50ms
@@ -2627,192 +2780,198 @@ async function showInlineDiceAnimation(finalValue, caught, usedUltraBall) {     
     
     await new Promise(resolve => {
         const rollTimer = setInterval(() => {
-            elapsed += rollInterval;State.playerMoney < TownState.shopPrices.mega_stone) {
-            , 'warning');
+            elapsed += rollInterval;
+            
             // Show random dice face
             const randomFace = diceFaces[Math.floor(Math.random() * 6)];
             diceFace.textContent = randomFace;
-            Stone || TownState.usedMegaStone) {
-            if (elapsed >= rollDuration) { showToast('Você só pode usar uma Mega Stone por partida!', 'warning');
-                clearInterval(rollTimer);    return;
+            
+            if (elapsed >= rollDuration) {
+                clearInterval(rollTimer);
                 resolve();
             }
-        }, rollInterval);lve
-    });const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
-    n.has_mega || !activePokemon.mega_evolution_id || activePokemon.is_mega) {
-    // Show final result('Selecione um Pokémon com Mega Evolução como ativo!', 'warning');
+        }, rollInterval);
+    });
+    
+    // Show final result
     diceFace.textContent = diceFaces[finalValue];
     diceContainer.classList.add('stopped');
     
-    // Add success/fail animation classry {
-    if (caught) {    // Buy Mega Stone and Mega Evolve in one action
-        diceContainer.classList.add('success');pi/town.php?action=buy_and_mega_evolve', {
+    // Add success/fail animation class
+    if (caught) {
+        diceContainer.classList.add('success');
     } else {
-        diceContainer.classList.add('fail');        player_id: GameState.playerId
+        diceContainer.classList.add('fail');
     }
     
-    // Keep showing result for a moment       if (result.success) {
-    await new Promise(resolve => setTimeout(resolve, 600));            TownState.playerMoney = result.new_money;
-             TownState.hasMegaStone = false;
+    // Keep showing result for a moment
+    await new Promise(resolve => setTimeout(resolve, 600));
+    
     // Hide dice after animation
-    diceContainer.classList.add('hidden');         showToast(`💎 ${activePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'success');
-}ePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'mega-evolution');
+    diceContainer.classList.add('hidden');
+}
 
-/**    } else {
- * Show Ultra Ball throw animation (guaranteed catch)t.error || 'Falha na Mega Evolução', 'error');
- */    }
-async function showUltraBallAnimation() {) {
-    const ultraBall = document.getElementById('ultra-ball-animation');stone:', error);
-    tone', 'error');
-    if (!ultraBall) return;}
+/**
+ * Show Ultra Ball throw animation (guaranteed catch)
+ */
+async function showUltraBallAnimation() {
+    const ultraBall = document.getElementById('ultra-ball-animation');
+    
+    if (!ultraBall) return;
     
     // Reset state
     ultraBall.classList.remove('active');
-    ultraBall.classList.remove('hidden');dal
+    ultraBall.classList.remove('hidden');
     
-    // Trigger animation{
+    // Trigger animation
     // Small delay to ensure CSS reset takes effect
     await new Promise(resolve => setTimeout(resolve, 10));
     ultraBall.classList.add('active');
-    ment('div');
-    // Wait for animation to complete (1 second)ay mega-evolution-modal';
-    await new Promise(resolve => setTimeout(resolve, 1000));   overlay.id = 'mega-evolution-modal-overlay';
-        overlay.innerHTML = `
-    // Hide after animation     <div class="sell-modal mega-modal">
-    ultraBall.classList.add('hidden');olução</h3>
-    ultraBall.classList.remove('active');         <div class="mega-evolution-preview">
-}emon-before">
-="${pokemon.name}">
-/**>
- * Attack the wild Pokemon </div>
- */           <div class="mega-arrow">→</div>
-async function attackWildPokemon() {            <div class="mega-pokemon-after">
-    if (!GameState.isMyTurn || !GameState.wildPokemon) {img src="${pokemon.mega_sprite_url}" alt="${pokemon.mega_name}">
-        showToast("Não é sua vez!", 'warning');                <span>${pokemon.mega_name}</span>
-        return;       </div>
-    }
-        <p class="mega-warning">⚠️ Você só pode usar UMA Mega Evolução por partida!</p>
-    setLoading(true);fo">A Mega Evolução é permanente durante o jogo.</p>
     
-    try {click="closeMegaEvolutionModal()">Cancelar</button>
-        const result = await apiCall(API.catching, { action: 'attack' });firm" onclick="confirmMegaEvolution()">💎 Mega Evoluir!</button>
+    // Wait for animation to complete (1 second)
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    
+    // Hide after animation
+    ultraBall.classList.add('hidden');
+    ultraBall.classList.remove('active');
+}
+
+/**
+ * Attack the wild Pokemon
+ */
+async function attackWildPokemon() {
+    if (!GameState.isMyTurn || !GameState.wildPokemon) {
+        showToast("Não é sua vez!", 'warning');
+        return;
+    }
+    
+    // Stop the countdown timer — player has acted
+    stopCatchingTimer();
+    
+    setLoading(true);
+    
+    try {
+        const result = await apiCall(API.catching, { action: 'attack' });
         
         if (result.success) {
             let msg = `Dealt ${result.damage} damage!`;
             if (result.type_multiplier > 1) {
-                msg += ' Super effective!';lay);
+                msg += ' Super effective!';
             } else if (result.type_multiplier < 1) {
                 msg += ' Not very effective...';
             }
             
             if (result.defeated) {
-                msg += ` The wild Pokémon fled!`;eMegaEvolutionModal() {
-            }erlay = document.getElementById('mega-evolution-modal-overlay');
+                msg += ` The wild Pokémon fled!`;
+            }
             
-            if (result.evolved) {lay.remove();
+            if (result.evolved) {
                 showToast(`Seu Pokémon evoluiu para ${result.evolved.to}!`, 'success');
-            }lectedPokemonForMega = null;
+            }
             
             showToast(msg, 'info');
             
             // State will be updated via SSE
         } else {
-            showToast(result.error || 'Ataque falhou', 'error'); function confirmMegaEvolution() {
-        }const pokemon = TownState.selectedPokemonForMega;
-    } catch (error) {rn;
-        console.error('Error attacking:', error);   
-        showToast('Erro ao atacar', 'error');    closeMegaEvolutionModal();
-    } 
+            showToast(result.error || 'Ataque falhou', 'error');
+        }
+    } catch (error) {
+        console.error('Error attacking:', error);
+        showToast('Erro ao atacar', 'error');
+    }
     
-    setLoading(false);     const result = await apiCall('api/town.php?action=mega_evolve', {
+    setLoading(false);
 }
-,
-/**        team_id: pokemon.team_id
+
+/**
  * Add a message to the catching log
  */
 function addCatchingLog(message, type = 'info') {
-    if (!DOM.catchingLogMessages) return;        TownState.hasMegaStone = false;
+    if (!DOM.catchingLogMessages) return;
     
     const entry = document.createElement('div');
-    entry.className = `log-entry log-${type}`;        addTownLogMessage(`💎 ${pokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'mega-evolution');
-    entry.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;e();
+    entry.className = `log-entry log-${type}`;
+    entry.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;
     
     DOM.catchingLogMessages.appendChild(entry);
-    DOM.catchingLogMessages.scrollTop = DOM.catchingLogMessages.scrollHeight;   }
-       } catch (error) {
-    // Keep only last 50 messages        console.error('Error mega evolving:', error);
-    while (DOM.catchingLogMessages.children.length > 50) {     showToast('Erro ao Mega Evoluir', 'error');
+    DOM.catchingLogMessages.scrollTop = DOM.catchingLogMessages.scrollHeight;
+    
+    // Keep only last 50 messages
+    while (DOM.catchingLogMessages.children.length > 50) {
         DOM.catchingLogMessages.removeChild(DOM.catchingLogMessages.firstChild);
     }
 }
 
-/**oggle ready status
+/**
  * Handle keyboard shortcuts for catching phase
- */ggleTownReady() {
+ */
 function handleCatchingKeyboard(e) {
-    if (GameState.currentScreen !== 'catching' || !GameState.isMyTurn) return;lt = await apiCall('api/town.php?action=toggle_ready', {
-    code: GameState.roomCode,
+    if (GameState.currentScreen !== 'catching' || !GameState.isMyTurn) return;
+    
     switch (e.key.toLowerCase()) {
         case 'c':
             if (!DOM.btnCatch?.disabled) attemptCatch(false);
             break;
-        case 'u':ate.isReady = result.is_ready;
-            if (!DOM.btnUltraCatch?.disabled) attemptCatch(true);       updateReadyButton();
-            break;           
-        case 'a':            // Update ready status display
-            if (!DOM.btnAttack?.disabled) attackWildPokemon();mentById('town-ready-status');
+        case 'u':
+            if (!DOM.btnUltraCatch?.disabled) attemptCatch(true);
             break;
-    }sult.ready_count}/${result.total_players} jogadores prontos`;
-}            }
+        case 'a':
+            if (!DOM.btnAttack?.disabled) attackWildPokemon();
+            break;
+    }
+}
 
-// ============================================all_ready) {
-// END CATCHING PHASE FUNCTIONSrontos! Iniciando Torneio...', 'success');
-// ============================================                // Game state change will be handled by SSE
-         } else {
-// ============================================wToast(result.is_ready ? 'Você está pronto!' : 'Pronto cancelado', 'info');
-// TOWN PHASE FUNCTIONS         }
 // ============================================
-st(result.error || 'Falha ao atualizar status de pronto', 'error');
+// END CATCHING PHASE FUNCTIONS
+// ============================================
+
+// ============================================
+// TOWN PHASE FUNCTIONS
+// ============================================
+
 /**
  * Town Phase State
- */ror toggling ready:', error);
-const TownState = {oast('Erro ao atualizar status de pronto', 'error');
+ */
+const TownState = {
     playerMoney: 0,
     ultraBalls: 0,
     hasMegaStone: false,
     usedMegaStone: false,
     team: [],
     activeSlot: 0,
-    isReady: false,tton() {
-    players: [],ment.getElementById('btn-town-ready');
+    isReady: false,
+    players: [],
     selectedPokemonForSell: null,
     selectedPokemonForMega: null,
-    shopPrices: {y) {
-        ultra_ball: 3,t = 'Cancelar Pronto';
-        evo_soda: 1,   btn.classList.add('is-ready');
-        mega_stone: 5,  } else {
-        hp_boost: 2,        btn.textContent = 'Pronto para Torneio';
-        attack_boost: 2,     btn.classList.remove('is-ready');
+    shopPrices: {
+        ultra_ball: 3,
+        evo_soda: 1,
+        mega_stone: 5,
+        hp_boost: 2,
+        attack_boost: 2,
         speed_boost: 2
-    } 
+    }
 };
-r(p => p.is_ready).length;
-/**const readyStatus = document.getElementById('town-ready-status');
+
+/**
  * Initialize Town Phase
- */${TownState.players.length} jogadores prontos`;
-async function initTownPhase() {}
+ */
+async function initTownPhase() {
     console.log('Initializing Town Phase...');
     
     // Show leave game button
     DOM.btnLeaveGame?.classList.remove('hidden');
     
-    // Load town state from serverunction renderTownPlayersList() {
-    await refreshTownState();    const list = document.getElementById('town-players-list');
-     if (!list) return;
+    // Load town state from server
+    await refreshTownState();
+    
     // Setup town event listeners
-    setupTownListeners(); list.innerHTML = '';
+    setupTownListeners();
+    
+    // Start the 60-second town countdown timer
+    startTownTimer();
 }
-rs.forEach(player => {
+
 /**
  * Setup Town Phase event listeners
  */
@@ -2820,39 +2979,38 @@ function setupTownListeners() {
     // Shop buttons
     const btnBuyUltra = document.getElementById('btn-buy-ultra');
     const btnBuyEvoSoda = document.getElementById('btn-buy-evo-soda');
-    const btnBuyMegaStone = document.getElementById('btn-buy-mega-stone');    const avatar = AVATARS[avatarIndex] || '😎';
+    const btnBuyMegaStone = document.getElementById('btn-buy-mega-stone');
     const btnBuyHpBoost = document.getElementById('btn-buy-hp-boost');
     const btnBuyAttackBoost = document.getElementById('btn-buy-attack-boost');
     const btnBuySpeedBoost = document.getElementById('btn-buy-speed-boost');
     const btnTownReady = document.getElementById('btn-town-ready');
-    }</span>
-    btnBuyUltra?.addEventListener('click', buyUltraBall);' : 'Shopping...'}</span>
+    
+    btnBuyUltra?.addEventListener('click', buyUltraBall);
     btnBuyEvoSoda?.addEventListener('click', buyEvoSoda);
-    btnBuyMegaStone?.addEventListener('click', buyMegaStone);       `;
-    btnBuyHpBoost?.addEventListener('click', () => buyStatBoost('hp'));        
-    btnBuyAttackBoost?.addEventListener('click', () => buyStatBoost('attack'));     list.appendChild(card);
+    btnBuyMegaStone?.addEventListener('click', buyMegaStone);
+    btnBuyHpBoost?.addEventListener('click', () => buyStatBoost('hp'));
+    btnBuyAttackBoost?.addEventListener('click', () => buyStatBoost('attack'));
     btnBuySpeedBoost?.addEventListener('click', () => buyStatBoost('speed'));
     btnTownReady?.addEventListener('click', toggleTownReady);
 }
 
 /**
  * Refresh Town State from server
- */nLogMessage(message, type = 'info') {
-async function refreshTownState() {ages = document.getElementById('town-log-messages');
-    try {ogMessages) return;
+ */
+async function refreshTownState() {
+    try {
         const result = await apiCall(
-            `api/town.php?action=get_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,ateElement('div');
+            `api/town.php?action=get_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
             {},
-            'GET' = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;
+            'GET'
         );
-        essages.appendChild(entry);
+        
         if (!result.success) {
             showToast('Falha ao carregar estado da cidade', 'error');
             return;
         }
-        .removeChild(logMessages.firstChild);
+        
         // Check if game state has changed (e.g., town → tournament)
-        // This handles the case where a WS/SSE phase_changed event was missed
         if (result.room.game_state && result.room.game_state !== 'town') {
             console.log(`Town state polling detected phase change to: ${result.room.game_state}`);
             handleGameStateChange(result.room.game_state);
@@ -2860,62 +3018,62 @@ async function refreshTownState() {ages = document.getElementById('town-log-mess
         }
         
         // Update local state
-        TownState.playerMoney = result.player.money;d) {
-        TownState.ultraBalls = result.player.ultra_balls;=== 'ultra_ball' ? 'Ultra Ball' : 'Evo Soda';
-        TownState.hasMegaStone = result.player.has_mega_stone || false;`, 'info');
+        TownState.playerMoney = result.player.money;
+        TownState.ultraBalls = result.player.ultra_balls;
+        TownState.hasMegaStone = result.player.has_mega_stone || false;
         TownState.usedMegaStone = result.player.used_mega_stone || false;
-        TownState.team = result.team;            addTownLogMessage(`${data.pokemon_name} de ${data.player_name} evoluiu para ${data.evolved_to}!`, 'evolution');
+        TownState.team = result.team;
         TownState.activeSlot = result.player.active_pokemon_slot;
         TownState.isReady = result.player.is_ready;
-        TownState.players = result.players;    break;
+        TownState.players = result.players;
         TownState.shopPrices = result.shop_prices || TownState.shopPrices;
         GameState.currentRoute = result.room.current_route;
         
-        // Render UI           addTownLogMessage(`${data.player_name} vendeu ${data.pokemon_name}`, 'info');
-        renderTownUI();           }
-                    break;
-    } catch (error) {         
-        console.error('Error loading town state:', error);n_ready_toggle':
-        showToast('Erro ao carregar dados da cidade', 'error');         // Refresh players list to update ready status
-    }ate();
+        // Render UI
+        renderTownUI();
+        
+    } catch (error) {
+        console.error('Error loading town state:', error);
+        showToast('Erro ao carregar dados da cidade', 'error');
+    }
 }
 
 /**
  * Render Town UI
- */            showToast('Todos os jogadores prontos! Iniciando Torneio...', 'success');
+ */
 function renderTownUI() {
     // Update header info
     const moneyDisplay = document.getElementById('town-player-money');
-    const routeIndicator = document.getElementById('town-route-indicator');        
-    const ultraCount = document.getElementById('town-ultra-count');':
+    const routeIndicator = document.getElementById('town-route-indicator');
+    const ultraCount = document.getElementById('town-ultra-count');
     
-    if (moneyDisplay) moneyDisplay.textContent = `R$ ${TownState.playerMoney}`;ata.pokemon_name}`, 'info');
+    if (moneyDisplay) moneyDisplay.textContent = `R$ ${TownState.playerMoney}`;
     if (routeIndicator) routeIndicator.textContent = `Rota ${GameState.currentRoute}/5`;
-    if (ultraCount) ultraCount.textContent = TownState.ultraBalls;        break;
+    if (ultraCount) ultraCount.textContent = TownState.ultraBalls;
     
     // Update shop button states
     const btnBuyUltra = document.getElementById('btn-buy-ultra');
-    const btnBuyEvoSoda = document.getElementById('btn-buy-evo-soda');=======================
+    const btnBuyEvoSoda = document.getElementById('btn-buy-evo-soda');
     const btnBuyMegaStone = document.getElementById('btn-buy-mega-stone');
     
     if (btnBuyUltra) {
         btnBuyUltra.disabled = TownState.playerMoney < TownState.shopPrices.ultra_ball;
-    }URNAMENT PHASE FUNCTIONS
-    if (btnBuyEvoSoda) {=====================
+    }
+    if (btnBuyEvoSoda) {
         // Check if active Pokemon can gain EXP
         const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
         const canGainExp = activePokemon && activePokemon.can_evolve;
         btnBuyEvoSoda.disabled = TownState.playerMoney < TownState.shopPrices.evo_soda || !canGainExp;
     }
     if (btnBuyMegaStone) {
-        // Check if active Pokemon can Mega Evolvelayer: null,
+        // Check if active Pokemon can Mega Evolve
         const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
         const canActiveMegaEvolve = activePokemon && 
                                      activePokemon.has_mega && 
                                      activePokemon.mega_evolution_id && 
                                      !activePokemon.is_mega;
         
-        // Can buy mega stone if: has enough money AND hasn't used one yet AND active Pokemon can mega evolveebreaker: false,
+        // Can buy mega stone if: has enough money AND hasn't used one yet AND active Pokemon can mega evolve
         const canBuyMega = TownState.playerMoney >= TownState.shopPrices.mega_stone && 
                           !TownState.hasMegaStone && 
                           !TownState.usedMegaStone &&
@@ -2923,111 +3081,111 @@ function renderTownUI() {
         btnBuyMegaStone.disabled = !canBuyMega;
         
         // Update button text based on state
-        if (TownState.usedMegaStone) {nitTournamentPhase() {
+        if (TownState.usedMegaStone) {
             btnBuyMegaStone.innerHTML = '<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Stone</span><span class="shop-item-price">USADO</span>';
             btnBuyMegaStone.title = 'Você já usou sua Mega Stone nesta partida';
-        } else if (canActiveMegaEvolve) {ad tournament state from server
-            btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Evoluir ${activePokemon.name}</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;wait refreshTournamentState();
+        } else if (canActiveMegaEvolve) {
+            btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Evoluir ${activePokemon.name}</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;
             btnBuyMegaStone.title = `Mega Evoluir ${activePokemon.name} → ${activePokemon.mega_name}`;
-        } else {s
+        } else {
             btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Stone</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;
             btnBuyMegaStone.title = 'Selecione um Pokémon com Mega Evolução como ativo';
         }
     }
-    etup Tournament Phase event listeners
+    
     // Update stat boost button states
     const btnBuyHpBoost = document.getElementById('btn-buy-hp-boost');
-    const btnBuyAttackBoost = document.getElementById('btn-buy-attack-boost');onst btnStartBattle = document.getElementById('btn-start-battle');
-    const btnBuySpeedBoost = document.getElementById('btn-buy-speed-boost');ument.getElementById('btn-next-route');
+    const btnBuyAttackBoost = document.getElementById('btn-buy-attack-boost');
+    const btnBuySpeedBoost = document.getElementById('btn-buy-speed-boost');
     const hasActivePokemon = TownState.team.some(p => p.slot === TownState.activeSlot);
-    / Remove old listeners by cloning
+    
     if (btnBuyHpBoost) {
         btnBuyHpBoost.disabled = TownState.playerMoney < TownState.shopPrices.hp_boost || !hasActivePokemon;
-    }   btnStartBattle.parentNode.replaceChild(newBtn, btnStartBattle);
-    if (btnBuyAttackBoost) {    newBtn.addEventListener('click', startNextBattle);
+    }
+    if (btnBuyAttackBoost) {
         btnBuyAttackBoost.disabled = TownState.playerMoney < TownState.shopPrices.attack_boost || !hasActivePokemon;
     }
-    if (btnBuySpeedBoost) {if (btnNextRoute) {
-        btnBuySpeedBoost.disabled = TownState.playerMoney < TownState.shopPrices.speed_boost || !hasActivePokemon;NextRoute.cloneNode(true);
-    }ode.replaceChild(newBtn, btnNextRoute);
-        newBtn.addEventListener('click', completeTournament);
+    if (btnBuySpeedBoost) {
+        btnBuySpeedBoost.disabled = TownState.playerMoney < TownState.shopPrices.speed_boost || !hasActivePokemon;
+    }
+    
     // Render team grid
     renderTownTeamGrid();
     
-    // Render players list/**
-    renderTownPlayersList();Refresh Tournament State from server
+    // Render players list
+    renderTownPlayersList();
     
-    // Update ready buttonnc function refreshTournamentState() {
+    // Update ready button
     updateReadyButton();
 }
-ate.roomCode}&player_id=${GameState.playerId}`,
-/**        {},
+
+/**
  * Render Town Team Grid
- */    );
+ */
 function renderTownTeamGrid() {
-    const grid = document.getElementById('town-team-grid');    if (!result.success) {
-    const activeInfo = document.getElementById('town-active-name');a ao carregar estado do torneio', 'error');
+    const grid = document.getElementById('town-team-grid');
+    const activeInfo = document.getElementById('town-active-name');
     
-    if (!grid) return;    }
+    if (!grid) return;
     
     grid.innerHTML = '';
     
-    // Debug: log team datant.bye_player;
-    console.log('Town Team Data:', TownState.team);.current_match;
-    TournamentState.players = result.players;
-    // Create 6 slots (max team size)e.completedMatches = result.tournament.completed_matches;
-    for (let i = 0; i < 6; i++) {.total_matches;
-        const pokemon = TownState.team.find(p => p.slot === i);ayer_id;
-        const slot = document.createElement('div');rnament.is_tiebreaker || false;
-        slot.className = 'town-pokemon-slot';tournament.tiebreaker_type || '';
+    // Debug: log team data
+    console.log('Town Team Data:', TownState.team);
+    
+    // Create 6 slots (max team size)
+    for (let i = 0; i < 6; i++) {
+        const pokemon = TownState.team.find(p => p.slot === i);
+        const slot = document.createElement('div');
+        slot.className = 'town-pokemon-slot';
         
-        if (pokemon) {m.current_route;
+        if (pokemon) {
             const isActive = i === TownState.activeSlot;
-            const sellPrice = 2 + pokemon.evolution_stage;t match
-            const canEvolve = pokemon.evolution_id != null;
+            const sellPrice = 2 + pokemon.evolution_stage;
+            const canEvolve = pokemon.can_evolve;
             const expDisplay = pokemon.exp || 0;
-            const canMegaEvolve = pokemon.has_mega && pokemon.mega_evolution_id && !pokemon.is_mega; TournamentState.currentMatch.player2?.id == GameState.playerId);
+            const canMegaEvolve = pokemon.has_mega && pokemon.mega_evolution_id && !pokemon.is_mega;
             const isMega = pokemon.is_mega;
             
             // Ensure we have a valid sprite URL
             const spriteUrl = pokemon.sprite_url || `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${pokemon.pokemon_id}.png`;
             console.log(`Pokemon ${pokemon.name} (ID: ${pokemon.pokemon_id}): sprite_url = ${spriteUrl}`);
-            ', error);
-            if (isActive) slot.classList.add('active');gar dados do torneio', 'error');
+            
+            if (isActive) slot.classList.add('active');
             if (isMega) slot.classList.add('mega-evolved');
             if (canMegaEvolve && TownState.hasMegaStone) slot.classList.add('can-mega-evolve');
             
             // Create image element separately to add load/error handlers
             const img = document.createElement('img');
             img.src = spriteUrl;
-            img.alt = pokemon.name;header info
-            img.className = 'team-pokemon-sprite';uteDisplay = document.getElementById('tournament-route');
-            img.onload = () => console.log(`✓ Image loaded: ${pokemon.name}`);nt.getElementById('tournament-progress');
-            img.onerror = () => {stBadge = document.getElementById('tournament-host-badge');
-                console.error(`✗ Image FAILED: ${pokemon.name} - ${spriteUrl}`);ent-header h2');
+            img.alt = pokemon.name;
+            img.className = 'team-pokemon-sprite';
+            img.onload = () => console.log(`✓ Image loaded: ${pokemon.name}`);
+            img.onerror = () => {
+                console.error(`✗ Image FAILED: ${pokemon.name} - ${spriteUrl}`);
                 img.src = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/0.png';
             };
-            lse;
-            slot.appendChild(img);reakerType || '';
             
-            // Add Mega badge if this Pokemon is mega evolvedbreaker) {
-            if (isMega) {routeDisplay) routeDisplay.textContent = `⚔️ DESEMPATE`;
+            slot.appendChild(img);
+            
+            // Add Mega badge if this Pokemon is mega evolved
+            if (isMega) {
                 const megaBadge = document.createElement('span');
-                megaBadge.className = 'pokemon-mega-badge';=== 'final_tiebreaker' 
+                megaBadge.className = 'pokemon-mega-badge';
                 megaBadge.textContent = 'MEGA';
                 slot.appendChild(megaBadge);
             }
             
-            // Add Mega evolution indicator if player has mega stone and Pokemon can mega evolvent = `Rota ${GameState.currentRoute}/8`;
-            if (canMegaEvolve && TownState.hasMegaStone) {ournamentHeader) tournamentHeader.textContent = '🏆 Torneio';
+            // Add Mega evolution indicator if player has mega stone and Pokemon can mega evolve
+            if (canMegaEvolve && TownState.hasMegaStone) {
                 const megaIndicator = document.createElement('span');
                 megaIndicator.className = 'pokemon-mega-indicator';
-                megaIndicator.textContent = '💎';${TournamentState.completedMatches}/${TournamentState.totalMatches}`;
-                megaIndicator.title = `Mega Evoluir ${activePokemon.name} → ${activePokemon.mega_name}`;
+                megaIndicator.textContent = '💎';
+                megaIndicator.title = `Mega Evolução disponível → ${pokemon.mega_name}`;
                 slot.appendChild(megaIndicator);
-            }d) === String(TournamentState.hostPlayerId);
-            adge) {
-            if (canEvolve) {isHost) {
+            }
+            
+            if (canEvolve) {
                 const expBadge = document.createElement('span');
                 expBadge.className = 'pokemon-exp-badge';
                 expBadge.textContent = expDisplay;
@@ -3051,223 +3209,223 @@ function renderTownTeamGrid() {
                 if (bonusAtk > 0) bonusParts.push(`⚔️+${bonusAtk}`);
                 if (bonusSpd > 0) bonusParts.push(`💨+${bonusSpd}`);
                 bonusBadge.textContent = bonusParts.join(' ');
-                slot.appendChild(bonusBadge);urnament-brackets');
+                slot.appendChild(bonusBadge);
             }
             
             let tooltipText = `${pokemon.name}${isActive ? ' (Ativo)' : ''}${isMega ? ' (MEGA)' : ''}\nHP: ${pokemon.hp}${bonusHp > 0 ? `(+${bonusHp})` : ''} | ATQ: ${pokemon.attack}${bonusAtk > 0 ? `(+${bonusAtk})` : ''} | VEL: ${pokemon.speed}${bonusSpd > 0 ? `(+${bonusSpd})` : ''}`;
             if (canEvolve) tooltipText += `\nEXP: ${expDisplay}/5`;
-            if (canMegaEvolve) tooltipText += `\n💎 Pode Mega Evoluir → ${pokemon.mega_name}`;=== 0) {
-            tooltipText += `\nVender por R$${sellPrice}`;rtida agendada</p>';
-            slot.title = tooltipText;eturn;
+            if (canMegaEvolve) tooltipText += `\n💎 Pode Mega Evoluir → ${pokemon.mega_name}`;
+            tooltipText += `\nVender por R$${sellPrice}`;
+            slot.title = tooltipText;
             
             slot.addEventListener('click', () => handleTownPokemonClick(pokemon, i));
-        } else {ournamentState.brackets.forEach((bracket, index) => {
-            slot.classList.add('empty');    const matchEl = document.createElement('div');
-            slot.innerHTML = '<span class="pokemon-name">Vazio</span>';ket-match';
+        } else {
+            slot.classList.add('empty');
+            slot.innerHTML = '<span class="pokemon-name">Vazio</span>';
         }
-        his is an NPC battle
-        grid.appendChild(slot);;
-    }   
-           // Determine match status
-    // Update active Pokemon name        if (bracket.status === 'completed') {
-    const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);         matchEl.classList.add('completed');
-    if (activeInfo) {{
-        activeInfo.textContent = activePokemon ? activePokemon.name : '---';         matchEl.classList.add('current');
-    }.match_index === bracket.match_index) {
+        
+        grid.appendChild(slot);
+    }
+    
+    // Update active Pokemon name
+    const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
+    if (activeInfo) {
+        activeInfo.textContent = activePokemon ? activePokemon.name : '---';
+    }
 }
 
 /**
- * Handle clicking on a Pokemon in the town team griding
+ * Handle clicking on a Pokemon in the town team grid
  */
-function handleTownPokemonClick(pokemon, slot) {hEl.classList.add('npc-battle');
+function handleTownPokemonClick(pokemon, slot) {
     // If clicking the active Pokemon, show sell confirmation
     if (slot === TownState.activeSlot) {
-        // Only show sell option if we have more than 1 Pokemont player1 = bracket.player1;
-        if (TownState.team.length > 1) {player2;
-            showSellConfirmation(pokemon);nner_id;
-        } else {   
-            showToast('Não pode vender seu último Pokémon!', 'warning');       const avatar1 = player1 ? (AVATARS[player1.avatar - 1] || '😎') : '?';
-        }        // For NPC, use their emoji avatar directly
-    } else {     const avatar2 = player2?.is_npc ? player2.avatar : (player2 ? (AVATARS[player2.avatar - 1] || '😎') : '?');
+        // Only show sell option if we have more than 1 Pokemon
+        if (TownState.team.length > 1) {
+            showSellConfirmation(pokemon);
+        } else {
+            showToast('Não pode vender seu último Pokémon!', 'warning');
+        }
+    } else {
         // Set as active Pokemon
-        setTownActivePokemon(slot);     const player1Class = winnerId ? (winnerId == player1?.id ? 'winner' : 'loser') : '';
-    }nnerId == player2?.id ? 'winner' : 'loser') : '';
+        setTownActivePokemon(slot);
+    }
 }
 
-/**) {
- * Set active Pokemon (Town Phase)ner-badge">✓ ${bracket.winner?.name || 'Vencedor'}</span>`;
- */cket.status === 'in_progress') {
-async function setTownActivePokemon(slot) { resultHtml = `<span class="pending">⚔️ Em Andamento</span>`;
-    try {} else {
-        const result = await apiCall('api/town.php?action=set_active', {an class="pending">Pendente</span>`;
+/**
+ * Set active Pokemon (Town Phase)
+ */
+async function setTownActivePokemon(slot) {
+    try {
+        const result = await apiCall('api/town.php?action=set_active', {
             room_code: GameState.roomCode,
             player_id: GameState.playerId,
-            slot: slotsplay (handle NPC differently)
-        });er2Html = '';
+            slot: slot
+        });
         
-        if (result.success) {   player2Html = `
-            TownState.activeSlot = slot;class="bracket-player npc-player ${player2Class}">
-            showToast(result.message, 'success');tar">${avatar2}</span>
+        if (result.success) {
+            TownState.activeSlot = slot;
+            showToast(result.message, 'success');
             renderTownUI();
-        } else {                   <div class="bracket-player-name npc-name">${player2.name}</div>
-            showToast(result.error || 'Falha ao trocar Pokémon', 'error');                       <div class="bracket-player-title">${player2.title || 'Líder de Ginásio'}</div>
-        }                    </div>
-    } catch (error) {             </div>
+        } else {
+            showToast(result.error || 'Falha ao trocar Pokémon', 'error');
+        }
+    } catch (error) {
         console.error('Error setting active Pokemon:', error);
-        showToast('Falha ao trocar Pokémon', 'error');     } else {
+        showToast('Erro ao trocar Pokémon', 'error');
     }
-}ayer2Class}">
-                <span class="bracket-player-avatar">${avatar2}</span>
-/**o">
- * Show sell confirmation modal                    <div class="bracket-player-name">${player2?.name || 'A definir'}</div>
- */     <div class="bracket-player-badges">🎖️ ${player2?.badges || 0}</div>
+}
+
+/**
+ * Show sell confirmation modal
+ */
 function showSellConfirmation(pokemon) {
     TownState.selectedPokemonForSell = pokemon;
     
     const sellPrice = 2 + pokemon.evolution_stage;
     
     // Create modal
-    const overlay = document.createElement('div');">${isNpcBattle ? '🏟️ Desafio de Ginásio' : `Partida ${index + 1}`}</div>
+    const overlay = document.createElement('div');
     overlay.className = 'sell-modal-overlay';
-    overlay.id = 'sell-modal-overlay';{player1Class}">
-    overlay.innerHTML = `pan>
-        <div class="sell-modal">  <div class="bracket-player-info">
-            <h3>Vender Pokémon?</h3>player-name">${player1?.name || 'TBD'}</div>
-            <div class="sell-modal-pokemon">0}</div>
+    overlay.id = 'sell-modal-overlay';
+    overlay.innerHTML = `
+        <div class="sell-modal">
+            <h3>Vender Pokémon?</h3>
+            <div class="sell-modal-pokemon">
                 <img src="${pokemon.sprite_url}" alt="${pokemon.name}">
-                <span>${pokemon.name}</span>div>
-                <span class="sell-modal-price">R$ ${sellPrice}</span>  <span class="bracket-vs">VS</span>
-            </div>          ${player2Html}
-            <div class="sell-modal-actions">        </div>
-                <button class="btn btn-danger" id="btn-confirm-sell">Vender</button>>${resultHtml}</div>
-                <button class="btn btn-secondary" id="btn-cancel-sell">Cancelar</button>    `;
+                <span>${pokemon.name}</span>
+                <span class="sell-modal-price">R$ ${sellPrice}</span>
+            </div>
+            <div class="sell-modal-actions">
+                <button class="btn btn-danger" id="btn-confirm-sell">Vender</button>
+                <button class="btn btn-secondary" id="btn-cancel-sell">Cancelar</button>
             </div>
         </div>
     `;
     
     document.body.appendChild(overlay);
     
-    // Setup modal buttons* Render Bye Player
-    document.getElementById('btn-confirm-sell').addEventListener('click', confirmSellPokemon); */
-    document.getElementById('btn-cancel-sell').addEventListener('click', closeSellModal);ction renderByePlayer() {
-    overlay.addEventListener('click', (e) => {t.getElementById('tournament-bye');
-        if (e.target === overlay) closeSellModal(); const byePlayerInfo = document.getElementById('bye-player-info');
+    // Setup modal buttons
+    document.getElementById('btn-confirm-sell').addEventListener('click', confirmSellPokemon);
+    document.getElementById('btn-cancel-sell').addEventListener('click', closeSellModal);
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeSellModal();
     });
 }
 
 /**
- * Close sell confirmation modal       byeContainer.classList.remove('hidden');
- */        const avatar = AVATARS[TournamentState.byePlayer.avatar - 1] || '😎';
-function closeSellModal() {     
+ * Close sell confirmation modal
+ */
+function closeSellModal() {
     const overlay = document.getElementById('sell-modal-overlay');
-    if (overlay) overlay.remove();         <span class="bye-player-avatar">${avatar}</span>
-    TownState.selectedPokemonForSell = null;ame">${TournamentState.byePlayer.name}</span>
-}rnamentState.byePlayer.badges}</span>
+    if (overlay) overlay.remove();
+    TownState.selectedPokemonForSell = null;
+}
 
-/**} else {
- * Confirm and execute Pokemon saleclassList.add('hidden');
- */}
+/**
+ * Confirm and execute Pokemon sale
+ */
 async function confirmSellPokemon() {
     const pokemon = TownState.selectedPokemonForSell;
     if (!pokemon) return;
     
     closeSellModal();
-    nderCurrentMatchPanel() {
-    try {t matchPanel = document.getElementById('current-match-panel');
-        const result = await apiCall('api/town.php?action=sell_pokemon', {ument.getElementById('tournament-complete-panel');
-            room_code: GameState.roomCode,'match-preview');
-            player_id: GameState.playerId,tn-start-battle');
+    
+    try {
+        const result = await apiCall('api/town.php?action=sell_pokemon', {
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId,
             team_id: pokemon.team_id
         });
-        nel || !completePanel) return;
+        
         if (result.success) {
-            showToast(result.message, 'success');eck if tournament is complete
-            TownState.playerMoney = result.new_money;omplete = TournamentState.brackets.every(b => b.status === 'completed');
+            showToast(result.message, 'success');
+            TownState.playerMoney = result.new_money;
             addTownLogMessage(`Vendeu ${pokemon.name} por R$${result.sell_price}`, 'sell');
             await refreshTownState();
-        } else {onsole.log('Host check:', {
-            showToast(result.error || 'Falha ao vender Pokémon', 'error');       playerId: GameState.playerId,
-        }        hostPlayerId: TournamentState.hostPlayerId,
-    } catch (error) {     areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId)
+        } else {
+            showToast(result.error || 'Falha ao vender Pokémon', 'error');
+        }
+    } catch (error) {
         console.error('Error selling Pokemon:', error);
-        showToast('Erro ao vender Pokémon', 'error'); 
-    }tate.playerId) === String(TournamentState.hostPlayerId);
+        showToast('Erro ao vender Pokémon', 'error');
+    }
 }
 
-/**nel.classList.add('hidden');
- * Buy Ultra Ball   completePanel.classList.remove('hidden');
- */    
-async function buyUltraBall() {/ Only host can advance to next route
+/**
+ * Buy Ultra Ball
+ */
+async function buyUltraBall() {
     if (TownState.playerMoney < 3) {
-        showToast('Dinheiro insuficiente!', 'warning');mentById('tournament-complete-waiting');
+        showToast('Dinheiro insuficiente!', 'warning');
         return;
-    }(btnNextRoute) {
-        if (isHost) {
-    try {classList.remove('hidden');
+    }
+    
+    try {
         const result = await apiCall('api/town.php?action=buy_ultra_ball', {
             room_code: GameState.roomCode,
             player_id: GameState.playerId
         });
         
-        if (result.success) {hide waiting message for non-hosts
+        if (result.success) {
             TownState.playerMoney = result.new_money;
-            TownState.ultraBalls = result.new_ultra_balls;   if (isHost) {
-            showToast(result.message, 'success');ngMsg.classList.add('hidden');
+            TownState.ultraBalls = result.new_ultra_balls;
+            showToast(result.message, 'success');
             addTownLogMessage('Comprou Ultra Ball!', 'purchase');
             renderTownUI();
-        } else {       }
-            showToast(result.error || 'Falha na compra', 'error');       }
-        }        return;
-    } catch (error) { }
+        } else {
+            showToast(result.error || 'Falha na compra', 'error');
+        }
+    } catch (error) {
         console.error('Error buying ultra ball:', error);
-        showToast('Erro ao comprar Ultra Ball', 'error'); matchPanel.classList.remove('hidden');
-    }dd('hidden');
+        showToast('Erro ao comprar Ultra Ball', 'error');
+    }
 }
 
-/** {
- * Buy Evo Soda   matchPreview.innerHTML = '<p>Aguardando próxima partida...</p>';
- */    if (btnStartBattle) btnStartBattle.classList.add('hidden');
-async function buyEvoSoda() {eturn;
+/**
+ * Buy Evo Soda
+ */
+async function buyEvoSoda() {
     if (TownState.playerMoney < 1) {
         showToast('Dinheiro insuficiente!', 'warning');
         return;
-    }layer2 = match.player2;
+    }
     
-    try { {
-        const result = await apiCall('api/town.php?action=buy_evo_soda', { da partida...</p>';
+    try {
+        const result = await apiCall('api/town.php?action=buy_evo_soda', {
             room_code: GameState.roomCode,
             player_id: GameState.playerId
         });
         
-        if (result.success) {AVATARS[player2.avatar - 1] || '😎';
+        if (result.success) {
             TownState.playerMoney = result.new_money;
-            showToast(result.message, 'success');layer1 = player1.id == GameState.playerId;
-            Player2 = player2.id == GameState.playerId;
+            showToast(result.message, 'success');
+            
             if (result.evolved) {
-                addTownLogMessage(`🎉 ${result.evolved_to} evoluiu!`, 'evolution');ElementById('match-player1').className = `match-player ${isPlayer1 ? 'is-you' : ''}`;
+                addTownLogMessage(`🎉 ${result.evolved_to} evoluiu!`, 'evolution');
             } else {
-                addTownLogMessage('Usou Evo Soda - +1 EXP!', 'purchase');div class="match-player-avatar">${avatar1}</div>
-            }atch-player-name">${player1.name}${isPlayer1 ? ' (Você)' : ''}</div>
-            badges}</div>
+                addTownLogMessage('Usou Evo Soda - +1 EXP!', 'purchase');
+            }
+            
             await refreshTownState();
         } else {
-            showToast(result.error || 'Falha na compra', 'error');   document.getElementById('match-player2').className = `match-player ${isPlayer2 ? 'is-you' : ''}`;
-        }    document.getElementById('match-player2').innerHTML = `
-    } catch (error) {     <div class="match-player-avatar">${avatar2}</div>
-        console.error('Error buying evo soda:', error);s="match-player-name">${player2.name}${isPlayer2 ? ' (Você)' : ''}</div>
-        showToast('Erro ao comprar Evo Soda', 'error');     <div class="match-player-badges">🎖️ ${player2.badges}</div>
+            showToast(result.error || 'Falha na compra', 'error');
+        }
+    } catch (error) {
+        console.error('Error buying evo soda:', error);
+        showToast('Erro ao comprar Evo Soda', 'error');
     }
 }
 
-/**tBattle && matchWaiting) {
- * Buy Mega Stone   if (isHost) {
- */        btnStartBattle.classList.remove('hidden');
+/**
+ * Buy Mega Stone
+ */
 async function buyMegaStone() {
     if (TownState.playerMoney < TownState.shopPrices.mega_stone) {
-        showToast('Dinheiro insuficiente!', 'warning');{
-        return;       btnStartBattle.classList.add('hidden');
-    }        matchWaiting.classList.remove('hidden');
-    entState.isParticipant 
+        showToast('Dinheiro insuficiente!', 'warning');
+        return;
+    }
+    
     if (TownState.hasMegaStone || TownState.usedMegaStone) {
         showToast('Você só pode usar uma Mega Stone por partida!', 'warning');
         return;
@@ -3278,122 +3436,122 @@ async function buyMegaStone() {
     if (!activePokemon || !activePokemon.has_mega || !activePokemon.mega_evolution_id || activePokemon.is_mega) {
         showToast('Selecione um Pokémon com Mega Evolução como ativo!', 'warning');
         return;
-    }mentById('tournament-standings-list');
-    andingsList) return;
+    }
+    
     try {
-        // Buy Mega Stone and Mega Evolve in one action '';
+        // Buy Mega Stone and Mega Evolve in one action
         const result = await apiCall('api/town.php?action=buy_and_mega_evolve', {
-            room_code: GameState.roomCode,win
+            room_code: GameState.roomCode,
             player_id: GameState.playerId
         });
         
-        if (result.success) {standings-goal">🎯 Meta: ${badgesToWin} insígnias para vencer!</span>`;
-            TownState.playerMoney = result.new_money;t.appendChild(header);
+        if (result.success) {
+            TownState.playerMoney = result.new_money;
             TownState.hasMegaStone = false;
-            TownState.usedMegaStone = true;rt players by badges, then by money
-            showToast(`💎 ${activePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'success');rs = [...TournamentState.players].sort((a, b) => {
-            addTownLogMessage(`💎 ${activePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'mega-evolution');dges;
+            TownState.usedMegaStone = true;
+            showToast(`💎 ${activePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'success');
+            addTownLogMessage(`💎 ${activePokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'mega-evolution');
             await refreshTownState();
-        } else {);
-            showToast(result.error || 'Falha na Mega Evolução', 'error');   
-        }    sortedPlayers.forEach((player, index) => {
-    } catch (error) {     const rank = index + 1;
-        console.error('Error buying mega stone:', error);lver' : (rank === 3 ? 'bronze' : ''));
-        showToast('Erro ao comprar Mega Stone', 'error');     const avatar = AVATARS[player.avatar_id - 1] || '😎';
-    }State.playerId;
-}>= badgesToWin - 1; // 4+ badges
+        } else {
+            showToast(result.error || 'Falha na Mega Evolução', 'error');
+        }
+    } catch (error) {
+        console.error('Error buying mega stone:', error);
+        showToast('Erro ao comprar Mega Stone', 'error');
+    }
+}
 
-/**    
- * Buy a stat boost (HP, Attack, or Speed) for the active PokemonElement('div');
- */? 'is-you' : ''} ${closeToWin ? 'close-to-win' : ''} ${isWinner ? 'has-won' : ''}`;
+/**
+ * Buy a stat boost (HP, Attack, or Speed) for the active Pokemon
+ */
 async function buyStatBoost(statType) {
-    const priceKey = `${statType}_boost`;   const badgesDisplay = `${player.badges}/${badgesToWin}`;
-    const price = TownState.shopPrices[priceKey] || 2;    
+    const priceKey = `${statType}_boost`;
+    const price = TownState.shopPrices[priceKey] || 2;
     
-    if (TownState.playerMoney < price) {standings-rank ${rankClass}">#${rank}</span>
-        showToast('Dinheiro insuficiente!', 'warning');atar}</span>
-        return;v class="standings-player-info">
-    }           <div class="standings-player-name">${player.player_name}${isYou ? ' (Você)' : ''}</div>
-                <div class="standings-player-badges">🎖️ ${badgesDisplay} ${isWinner ? '👑' : ''}</div>
-    const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);   </div>
+    if (TownState.playerMoney < price) {
+        showToast('Dinheiro insuficiente!', 'warning');
+        return;
+    }
+    
+    const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
     if (!activePokemon) {
         showToast('Nenhum Pokémon ativo!', 'warning');
         return;
-    }ndingsList.appendChild(playerEl);
+    }
     
     try {
         const result = await apiCall(`api/town.php?action=buy_${statType}_boost`, {
             room_code: GameState.roomCode,
-            player_id: GameState.playerId next battle
+            player_id: GameState.playerId
         });
         
-        if (result.success) {) {
-            TownState.playerMoney = result.new_money;t('Nenhuma partida disponível', 'warning');
+        if (result.success) {
+            TownState.playerMoney = result.new_money;
             showToast(result.message, 'success');
             
             const statNames = { hp: 'HP', attack: 'Ataque', speed: 'Velocidade' };
             addTownLogMessage(`${result.pokemon_name} ganhou +${result.bonus_value} ${statNames[statType]}!`, 'purchase');
-            await refreshTownState();mentState.hostPlayerId)) {
-        } else {   showToast('Apenas o anfitrião pode iniciar batalhas', 'warning');
-            showToast(result.error || 'Falha na compra', 'error');       return;
-        }    }
-    } catch (error) { 
+            await refreshTownState();
+        } else {
+            showToast(result.error || 'Falha na compra', 'error');
+        }
+    } catch (error) {
         console.error(`Error buying ${statType} boost:`, error);
-        showToast('Erro ao comprar boost', 'error'); 
+        showToast('Erro ao comprar boost', 'error');
     }
-}ament.php', {
-        action: 'start_match',
-/**de: GameState.roomCode,
- * Show Mega Evolution confirmation modaltch.match_index,
+}
+
+/**
+ * Show Mega Evolution confirmation modal
  */
 function showMegaEvolutionConfirmation(pokemon) {
     TownState.selectedPokemonForMega = pokemon;
     
-    // Create modalndo!', 'success');
-    const overlay = document.createElement('div');andled by SSE
+    // Create modal
+    const overlay = document.createElement('div');
     overlay.className = 'sell-modal-overlay mega-evolution-modal';
     overlay.id = 'mega-evolution-modal-overlay';
     overlay.innerHTML = `
         <div class="sell-modal mega-modal">
-            <h3>💎 Mega Evolução</h3> error);
-            <div class="mega-evolution-preview">ror');
+            <h3>💎 Mega Evolução</h3>
+            <div class="mega-evolution-preview">
                 <div class="mega-pokemon-before">
                     <img src="${pokemon.sprite_url}" alt="${pokemon.name}">
                     <span>${pokemon.name}</span>
                 </div>
                 <div class="mega-arrow">→</div>
                 <div class="mega-pokemon-after">
-                    <img src="${pokemon.mega_sprite_url}" alt="${pokemon.mega_name}">e
+                    <img src="${pokemon.mega_sprite_url}" alt="${pokemon.mega_name}">
                     <span>${pokemon.mega_name}</span>
                 </div>
-            </div>an advance to next route
-            <p class="mega-warning">⚠️ Você só pode usar UMA Mega Stone por partida!</p>(GameState.playerId) !== String(TournamentState.hostPlayerId)) {
-            <p class="mega-info">A Mega Evolução é permanente durante o jogo.</p>  showToast('Apenas o anfitrião pode avançar para a próxima rota', 'warning');
-            <div class="sell-modal-buttons">    return;
+            </div>
+            <p class="mega-warning">⚠️ Você só pode usar UMA Mega Evolução por partida!</p>
+            <p class="mega-info">A Mega Evolução é permanente durante o jogo.</p>
+            <div class="sell-modal-buttons">
                 <button class="btn-cancel" onclick="closeMegaEvolutionModal()">Cancelar</button>
-                <button class="btn-mega-confirm" onclick="confirmMegaEvolution()">💎 Mega Evoluir!</button>   
-            </div>    setLoading(true);
-        </div> 
+                <button class="btn-mega-confirm" onclick="confirmMegaEvolution()">💎 Mega Evoluir!</button>
+            </div>
+        </div>
     `;
-         const result = await apiCall('api/tournament.php', {
-    document.body.appendChild(overlay);ment',
-}
-_id: GameState.playerId
-/**
- * Close Mega Evolution modal   
- */
-function closeMegaEvolutionModal() {           if (result.game_finished) {
-    const overlay = document.getElementById('mega-evolution-modal-overlay');                showToast(`🏆 ${result.winner.name} venceu o jogo!`, 'success');
-    if (overlay) {             // Will transition to victory screen via SSE
-        overlay.remove();
-    }             showToast(`Avançando para a Rota ${result.new_route}!`, 'success');
-    TownState.selectedPokemonForMega = null;atching phase via SSE
+    
+    document.body.appendChild(overlay);
 }
 
-/**        showToast(result.error || 'Falha ao completar torneio', 'error');
+/**
+ * Close Mega Evolution modal
+ */
+function closeMegaEvolutionModal() {
+    const overlay = document.getElementById('mega-evolution-modal-overlay');
+    if (overlay) {
+        overlay.remove();
+    }
+    TownState.selectedPokemonForMega = null;
+}
+
+/**
  * Confirm Mega Evolution
- */} catch (error) {
-async function confirmMegaEvolution() {onsole.error('Error completing tournament:', error);
+ */
+async function confirmMegaEvolution() {
     const pokemon = TownState.selectedPokemonForMega;
     if (!pokemon) return;
     
@@ -3406,129 +3564,818 @@ async function confirmMegaEvolution() {onsole.error('Error completing tournament
             team_id: pokemon.team_id
         });
         
-        if (result.success) {tType) {
+        if (result.success) {
             TownState.hasMegaStone = false;
-            TownState.usedMegaStone = true;   console.log('Battle started event - transitioning to battle screen');
-            showToast(result.message, 'success');if this is an NPC battle
+            TownState.usedMegaStone = true;
+            showToast(result.message, 'success');
             addTownLogMessage(`💎 ${pokemon.name} Mega Evoluiu para ${result.mega_name}!`, 'mega-evolution');
-            await refreshTownState();|| 'Líder de Ginásio';
-        } else {           const npcTitle = data.player2?.title || '';
-            showToast(result.error || 'Falha na Mega Evolução', 'error');               showToast(`🏟️ Desafio de Ginásio: ${data.player1?.name} vs ${npcName}!`, 'info');
-        }            } else {
-    } catch (error) {             showToast(`Batalha: ${data?.player1?.name || 'Jogador 1'} vs ${data?.player2?.name || 'Jogador 2'}!`, 'info');
+            await refreshTownState();
+        } else {
+            showToast(result.error || 'Falha na Mega Evolução', 'error');
+        }
+    } catch (error) {
         console.error('Error mega evolving:', error);
-        showToast('Erro ao Mega Evoluir', 'error');         // Transition to battle screen
-    }'battle');
-}   break;
+        showToast('Erro ao Mega Evoluir', 'error');
+    }
+}
 
 /**
- * Toggle ready status} venceu a partida!`, 'info');
- */ refreshTournamentState();
-async function toggleTownReady() {    break;
+ * Toggle ready status
+ */
+async function toggleTownReady() {
     try {
         const result = await apiCall('api/town.php?action=toggle_ready', {
-            room_code: GameState.roomCode,te();
-            player_id: GameState.playerIdbreak;
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId
         });
         
-        if (result.success) {🏆 ${data.winner_name} venceu o jogo!`;
+        if (result.success) {
             TownState.isReady = result.is_ready;
-            updateReadyButton();   winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || 5} insígnias!`;
-            } else if (data.win_type === 'most_badges') {
-            // Update ready status displaydata.winner_name} venceu com mais insígnias!`;
+            updateReadyButton();
+            
+            // Update ready status display
             const readyStatus = document.getElementById('town-ready-status');
-            if (readyStatus) { o desempate e o jogo!`;
+            if (readyStatus) {
                 readyStatus.textContent = `${result.ready_count}/${result.total_players} jogadores prontos`;
             }
-            andleGameStateChange('finished');
-            if (result.all_ready) {k;
+            
+            if (result.all_ready) {
                 showToast('Todos os jogadores prontos! Iniciando Torneio...', 'success');
                 // Game state change will be handled by SSE
             } else {
                 showToast(result.is_ready ? 'Você está pronto!' : 'Pronto cancelado', 'info');
             }
-        } else {==========================================
+        } else {
             showToast(result.error || 'Falha ao atualizar status de pronto', 'error');
-        }// ============================================
-    } catch (error) {BATTLE PHASE FUNCTIONS
-        console.error('Error toggling ready:', error);===================
+        }
+    } catch (error) {
+        console.error('Error toggling ready:', error);
         showToast('Erro ao atualizar status de pronto', 'error');
     }
 }
 
-/**c function initBattlePhase() {
- * Update ready button stateg Battle Phase...');
- */tate.roomCode);
+/**
+ * Update ready button state
+ */
 function updateReadyButton() {
-    const btn = document.getElementById('btn-town-ready'); any existing auto-turn timer
+    const btn = document.getElementById('btn-town-ready');
     if (!btn) return;
-    Timer);
-    if (TownState.isReady) {   BattleState.autoTurnTimer = null;
-        btn.textContent = 'Cancelar Pronto';}
+    
+    if (TownState.isReady) {
+        btn.textContent = 'Cancelar Pronto';
         btn.classList.add('is-ready');
     } else {
         btn.textContent = 'Pronto para Torneio';
-        btn.classList.remove('is-ready');essages.innerHTML = '';
+        btn.classList.remove('is-ready');
     }
-       console.error('DOM.battleLogMessages not found!');
-    // Update ready count   }
-    const readyCount = TownState.players.filter(p => p.is_ready).length;    
-    const readyStatus = document.getElementById('town-ready-status'); // Fetch current battle state
+    
+    // Update ready count
+    const readyCount = TownState.players.filter(p => p.is_ready).length;
+    const readyStatus = document.getElementById('town-ready-status');
     if (readyStatus) {
-        readyStatus.textContent = `${readyCount}/${TownState.players.length} jogadores prontos`;     console.log('Fetching battle state...');
-    }ll(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
+        readyStatus.textContent = `${readyCount}/${TownState.players.length} jogadores prontos`;
+    }
 }
-attle state result:', result);
-/**    
- * Render players list in towness) {
- */        console.error('Battle state fetch failed:', result.error);
-function renderTownPlayersList() {lha ao carregar batalha', 'error');
+
+/**
+ * Render players list in town
+ */
+function renderTownPlayersList() {
     const list = document.getElementById('town-players-list');
     if (!list) return;
     
     list.innerHTML = '';
     
-    TownState.players.forEach(player => {// Store NPC battle info
-        const card = document.createElement('div');e || battleState.is_npc_battle || false;
-        card.className = 'town-player-card';tleState.npc_data || null;
+    TownState.players.forEach(player => {
+        const card = document.createElement('div');
+        card.className = 'town-player-card';
         
-        if (player.is_ready) card.classList.add('ready'); are a participant (player1 is always human in NPC battles)
-        if (player.id == GameState.playerId) card.classList.add('is-self');tleState.player1_id || 
-        eState.isNpcBattle && GameState.playerId == battleState.player2_id));
+        if (player.is_ready) card.classList.add('ready');
+        if (player.id == GameState.playerId) card.classList.add('is-self');
+        
         const avatarIndex = (player.avatar || 1) - 1;
         const avatar = AVATARS[avatarIndex] || '😎';
-        tate
-        card.innerHTML = `ttleState.player1 = result.player1;
-            <div class="town-player-avatar">${avatar}</div>BattleState.player2 = result.player2;
-            <div class="town-player-info"> = battleState.player1_team;
-                <span class="town-player-name">${escapeHtml(player.player_name)}</span> BattleState.player2Team = battleState.player2_team;
-                <span class="town-player-status">${player.is_ready ? '✓ Ready' : 'Shopping...'}</span>       BattleState.player1Active = battleState.player1_active;
-            </div>        BattleState.player2Active = battleState.player2_active;
-        `;     BattleState.player1HasSelected = battleState.player1_has_selected || (battleState.player1_active !== null);
-        2HasSelected = battleState.player2_has_selected || (battleState.player2_active !== null);
-        list.appendChild(card);     BattleState.phase = battleState.phase;
-    });t_turn;
+        
+        card.innerHTML = `
+            <div class="town-player-avatar">${avatar}</div>
+            <div class="town-player-info">
+                <span class="town-player-name">${escapeHtml(player.player_name)}</span>
+                <span class="town-player-status">${player.is_ready ? '✓ Ready' : 'Shopping...'}</span>
+            </div>
+        `;
+        
+        list.appendChild(card);
+    });
 }
- = battleState.battle_log || [];
-/**    BattleState.typeMatchups = result.type_matchups || null;
+
+/**
  * Add message to town log
  */
 function addTownLogMessage(message, type = 'info') {
-    const logMessages = document.getElementById('town-log-messages');    renderBattleArena();
+    const logMessages = document.getElementById('town-log-messages');
     if (!logMessages) return;
     
-    const entry = document.createElement('div');    
-    entry.className = `log-entry log-${type}`;f in selection phase and we're a participant
-    entry.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;&& BattleState.isMyBattle) {
+    const entry = document.createElement('div');
+    entry.className = `log-entry log-${type}`;
+    entry.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> ${message}`;
     
-    logMessages.appendChild(entry);           ? BattleState.player1HasSelected 
-    logMessages.scrollTop = logMessages.scrollHeight;               : BattleState.player2HasSelected;
-                
-    // Keep only last 30 messages         if (!myHasSelected) {
-    while (logMessages.children.length > 30) {onSelectionPanel();
-        logMessages.removeChild(logMessages.firstChild);         } else {
+    logMessages.appendChild(entry);
+    logMessages.scrollTop = logMessages.scrollHeight;
+    
+    // Keep only last 30 messages
+    while (logMessages.children.length > 30) {
+        logMessages.removeChild(logMessages.firstChild);
     }
 }
+
+/**
+ * Handle Town SSE events
+ */
+function handleTownEvent(eventType, data) {
+    switch (eventType) {
+        case 'town_purchase':
+            if (data.player_id != GameState.playerId) {
+                let itemName;
+                if (data.item === 'ultra_ball') itemName = 'Ultra Ball';
+                else if (data.item === 'evo_soda') itemName = 'Evo Soda';
+                else if (data.item === 'hp_boost') itemName = `HP Boost para ${data.pokemon_name}`;
+                else if (data.item === 'attack_boost') itemName = `Attack Boost para ${data.pokemon_name}`;
+                else if (data.item === 'speed_boost') itemName = `Speed Boost para ${data.pokemon_name}`;
+                else itemName = data.item;
+                addTownLogMessage(`${data.player_name} comprou ${itemName}`, 'info');
+                if (data.evolved) {
+                    addTownLogMessage(`${data.pokemon_name} de ${data.player_name} evoluiu para ${data.evolved_to}!`, 'evolution');
+                }
+            }
+            break;
+            
+        case 'town_sell':
+            if (data.player_id != GameState.playerId) {
+                addTownLogMessage(`${data.player_name} vendeu ${data.pokemon_name}`, 'info');
+            }
+            break;
+            
+        case 'town_ready_toggle':
+            // Refresh players list to update ready status
+            refreshTownState();
+            break;
+            
+        case 'town_phase_change':
+            if (data.new_phase === 'tournament') {
+                showToast('Todos os jogadores prontos! Iniciando Torneio...', 'success');
+                handleGameStateChange('tournament');
+            }
+            break;
+            
+        case 'town_switch_active':
+            if (data.player_id != GameState.playerId) {
+                addTownLogMessage(`${data.player_name} trocou para ${data.pokemon_name}`, 'info');
+            }
+            break;
+    }
+}
+
+// ============================================
+// END TOWN PHASE FUNCTIONS
+// ============================================
+
+// ============================================
+// TOURNAMENT PHASE FUNCTIONS
+// ============================================
+
+/**
+ * Tournament Phase State
+ */
+const TournamentState = {
+    brackets: [],
+    byePlayer: null,
+    currentMatch: null,
+    players: [],
+    completedMatches: 0,
+    totalMatches: 0,
+    isParticipant: false,
+    hostPlayerId: null,
+    isTiebreaker: false,
+    tiebreakerType: '',
+    tiebreakerRound: 1
+};
+
+/**
+ * Initialize Tournament Phase
+ */
+async function initTournamentPhase() {
+    console.log('Initializing Tournament Phase...');
+    
+    // Load tournament state from server
+    await refreshTournamentState();
+    
+    // Setup tournament event listeners
+    setupTournamentListeners();
+}
+
+/**
+ * Setup Tournament Phase event listeners
+ */
+function setupTournamentListeners() {
+    const btnStartBattle = document.getElementById('btn-start-battle');
+    const btnNextRoute = document.getElementById('btn-next-route');
+    
+    // Remove old listeners by cloning
+    if (btnStartBattle) {
+        const newBtn = btnStartBattle.cloneNode(true);
+        btnStartBattle.parentNode.replaceChild(newBtn, btnStartBattle);
+        newBtn.addEventListener('click', startNextBattle);
+    }
+    
+    if (btnNextRoute) {
+        const newBtn = btnNextRoute.cloneNode(true);
+        btnNextRoute.parentNode.replaceChild(newBtn, btnNextRoute);
+        newBtn.addEventListener('click', completeTournament);
+    }
+}
+
+/**
+ * Refresh Tournament State from server
+ */
+async function refreshTournamentState() {
+    try {
+        const result = await apiCall(
+            `api/tournament.php?action=get_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
+            {},
+            'GET'
+        );
+        
+        if (!result.success) {
+            showToast('Falha ao carregar estado do torneio', 'error');
+            return;
+        }
+        
+        // Check if game state has changed (e.g., tournament → catching for next route, or finished)
+        if (result.room.game_state && result.room.game_state !== 'tournament') {
+            console.log(`Tournament state polling detected phase change to: ${result.room.game_state}`);
+            handleGameStateChange(result.room.game_state);
+            return;
+        }
+        
+        // Update local state
+        TournamentState.brackets = result.tournament.brackets;
+        TournamentState.byePlayer = result.tournament.bye_player;
+        TournamentState.currentMatch = result.current_match;
+        TournamentState.players = result.players;
+        TournamentState.completedMatches = result.tournament.completed_matches;
+        TournamentState.totalMatches = result.tournament.total_matches;
+        TournamentState.hostPlayerId = result.room.host_player_id;
+        TournamentState.isTiebreaker = result.tournament.is_tiebreaker || false;
+        TournamentState.tiebreakerType = result.tournament.tiebreaker_type || '';
+        TournamentState.tiebreakerRound = result.tournament.round || 1;
+        GameState.currentRoute = result.room.current_route;
+        
+        // Check if this player is in the current match
+        TournamentState.isParticipant = TournamentState.currentMatch && 
+            (TournamentState.currentMatch.player1?.id == GameState.playerId || 
+             TournamentState.currentMatch.player2?.id == GameState.playerId);
+        
+        // Render UI
+        renderTournamentUI();
+        
+    } catch (error) {
+        console.error('Error loading tournament state:', error);
+        showToast('Erro ao carregar dados do torneio', 'error');
+    }
+}
+/**
+ * Render Tournament UI
+ */
+function renderTournamentUI() {
+    // Update header info
+    const routeDisplay = document.getElementById('tournament-route');
+    const progressDisplay = document.getElementById('tournament-progress');
+    const hostBadge = document.getElementById('tournament-host-badge');
+    const tournamentHeader = document.querySelector('.tournament-header h2');
+    
+    // Check if this is a tiebreaker tournament
+    const isTiebreaker = TournamentState.isTiebreaker || false;
+    const tiebreakerType = TournamentState.tiebreakerType || '';
+    
+    if (isTiebreaker) {
+        if (routeDisplay) routeDisplay.textContent = `⚔️ DESEMPATE`;
+        if (tournamentHeader) {
+            tournamentHeader.textContent = tiebreakerType === 'final_tiebreaker' 
+                ? '🏆 FINAL TIEBREAKER!' 
+                : '⚔️ TIEBREAKER BATTLE!';
+        }
+    } else {
+        if (routeDisplay) routeDisplay.textContent = `Rota ${GameState.currentRoute}/8`;
+        if (tournamentHeader) tournamentHeader.textContent = '🏆 Torneio';
+    }
+    
+    if (progressDisplay) progressDisplay.textContent = `Partida ${TournamentState.completedMatches}/${TournamentState.totalMatches}`;
+    
+    // Show host badge if this player is the host
+    const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
+    if (hostBadge) {
+        if (isHost) {
+            hostBadge.classList.remove('hidden');
+        } else {
+            hostBadge.classList.add('hidden');
+        }
+    }
+    
+    // Render brackets
+    renderTournamentBrackets();
+    
+    // Render bye player if exists
+    renderByePlayer();
+    
+    // Render current match panel
+    renderCurrentMatchPanel();
+    
+    // Render standings
+    renderTournamentStandings();
+}
+
+/**
+ * Render Tournament Brackets
+ */
+function renderTournamentBrackets() {
+    const bracketsContainer = document.getElementById('tournament-brackets');
+    if (!bracketsContainer) return;
+    
+    bracketsContainer.innerHTML = '';
+    
+    if (TournamentState.brackets.length === 0) {
+        bracketsContainer.innerHTML = '<p class="no-matches">Nenhuma partida agendada</p>';
+        return;
+    }
+    
+    TournamentState.brackets.forEach((bracket, index) => {
+        const matchEl = document.createElement('div');
+        matchEl.className = 'bracket-match';
+        
+        // Check if this is an NPC battle
+        const isNpcBattle = bracket.is_npc_battle || bracket.player2?.is_npc;
+        
+        // Determine match status
+        if (bracket.status === 'completed') {
+            matchEl.classList.add('completed');
+        } else if (bracket.status === 'in_progress') {
+            matchEl.classList.add('current');
+        } else if (TournamentState.currentMatch?.match_index === bracket.match_index) {
+            matchEl.classList.add('current');
+        }
+        
+        // Add NPC battle class for styling
+        if (isNpcBattle) {
+            matchEl.classList.add('npc-battle');
+        }
+        
+        const player1 = bracket.player1;
+        const player2 = bracket.player2;
+        const winnerId = bracket.winner_id;
+        
+        const avatar1 = player1 ? (AVATARS[player1.avatar - 1] || '😎') : '?';
+        // For NPC, use their emoji avatar directly
+        const avatar2 = player2?.is_npc ? player2.avatar : (player2 ? (AVATARS[player2.avatar - 1] || '😎') : '?');
+        
+        const player1Class = winnerId ? (winnerId == player1?.id ? 'winner' : 'loser') : '';
+        const player2Class = winnerId ? (winnerId == player2?.id ? 'winner' : 'loser') : '';
+        
+        let resultHtml = '';
+        if (bracket.status === 'completed') {
+            resultHtml = `<span class="winner-badge">✓ ${bracket.winner?.name || 'Vencedor'}</span>`;
+        } else if (bracket.status === 'in_progress') {
+            resultHtml = `<span class="pending">⚔️ Em Andamento</span>`;
+        } else {
+            resultHtml = `<span class="pending">Pendente</span>`;
+        }
+        
+        // Build player2 display (handle NPC differently)
+        let player2Html = '';
+        if (isNpcBattle && player2) {
+            player2Html = `
+                <div class="bracket-player npc-player ${player2Class}">
+                    <span class="bracket-player-avatar npc-avatar">${avatar2}</span>
+                    <div class="bracket-player-info">
+                        <div class="bracket-player-name npc-name">${player2.name}</div>
+                        <div class="bracket-player-title">${player2.title || 'Líder de Ginásio'}</div>
+                    </div>
+                </div>
+            `;
+        } else {
+            player2Html = `
+                <div class="bracket-player ${player2Class}">
+                    <span class="bracket-player-avatar">${avatar2}</span>
+                    <div class="bracket-player-info">
+                        <div class="bracket-player-name">${player2?.name || 'A definir'}</div>
+                        <div class="bracket-player-badges">🎖️ ${player2?.badges || 0}</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        matchEl.innerHTML = `
+            <div class="bracket-match-number">${isNpcBattle ? '🏟️ Desafio de Ginásio' : `Partida ${index + 1}`}</div>
+            <div class="bracket-players">
+                <div class="bracket-player ${player1Class}">
+                    <span class="bracket-player-avatar">${avatar1}</span>
+                    <div class="bracket-player-info">
+                        <div class="bracket-player-name">${player1?.name || 'TBD'}</div>
+                        <div class="bracket-player-badges">🎖️ ${player1?.badges || 0}</div>
+                    </div>
+                </div>
+                <span class="bracket-vs">VS</span>
+                ${player2Html}
+            </div>
+            <div class="bracket-result">${resultHtml}</div>
+        `;
+        
+        bracketsContainer.appendChild(matchEl);
+    });
+}
+
+/**
+ * Render Bye Player
+ */
+function renderByePlayer() {
+    const byeContainer = document.getElementById('tournament-bye');
+    const byePlayerInfo = document.getElementById('bye-player-info');
+    
+    if (!byeContainer || !byePlayerInfo) return;
+    
+    if (TournamentState.byePlayer) {
+        byeContainer.classList.remove('hidden');
+        const avatar = AVATARS[TournamentState.byePlayer.avatar - 1] || '😎';
+        
+        byePlayerInfo.innerHTML = `
+            <span class="bye-player-avatar">${avatar}</span>
+            <span class="bye-player-name">${TournamentState.byePlayer.name}</span>
+            <span class="bye-player-badges">🎖️ ${TournamentState.byePlayer.badges}</span>
+        `;
+    } else {
+        byeContainer.classList.add('hidden');
+    }
+}
+
+/**
+ * Render Current Match Panel
+ */
+function renderCurrentMatchPanel() {
+    const matchPanel = document.getElementById('current-match-panel');
+    const completePanel = document.getElementById('tournament-complete-panel');
+    const matchPreview = document.getElementById('match-preview');
+    const btnStartBattle = document.getElementById('btn-start-battle');
+    const matchWaiting = document.getElementById('match-waiting');
+    
+    if (!matchPanel || !completePanel) return;
+    
+    // Check if tournament is complete
+    const allMatchesComplete = TournamentState.brackets.every(b => b.status === 'completed');
+    
+    // Debug: log host comparison
+    console.log('Host check:', {
+        playerId: GameState.playerId,
+        hostPlayerId: TournamentState.hostPlayerId,
+        areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId)
+    });
+    
+    const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
+    
+    if (allMatchesComplete) {
+        matchPanel.classList.add('hidden');
+        completePanel.classList.remove('hidden');
+        
+        // Only host can advance to next route
+        const btnNextRoute = document.getElementById('btn-next-route');
+        const waitingMsg = document.getElementById('tournament-complete-waiting');
+        
+        if (btnNextRoute) {
+            if (isHost) {
+                btnNextRoute.classList.remove('hidden');
+            } else {
+                btnNextRoute.classList.add('hidden');
+            }
+        }
+        
+        // Show/hide waiting message for non-hosts
+        if (waitingMsg) {
+            if (isHost) {
+                waitingMsg.classList.add('hidden');
+            } else {
+                waitingMsg.classList.remove('hidden');
+            }
+        }
+        return;
+    }
+    
+    matchPanel.classList.remove('hidden');
+    completePanel.classList.add('hidden');
+    
+    const match = TournamentState.currentMatch;
+    if (!match) {
+        matchPreview.innerHTML = '<p>Aguardando próxima partida...</p>';
+        if (btnStartBattle) btnStartBattle.classList.add('hidden');
+        return;
+    }
+    
+    const player1 = match.player1;
+    const player2 = match.player2;
+    
+    if (!player1 || !player2) {
+        matchPreview.innerHTML = '<p>Carregando dados da partida...</p>';
+        return;
+    }
+    
+    const avatar1 = AVATARS[player1.avatar - 1] || '😎';
+    const avatar2 = AVATARS[player2.avatar - 1] || '😎';
+    
+    const isPlayer1 = player1.id == GameState.playerId;
+    const isPlayer2 = player2.id == GameState.playerId;
+    
+    document.getElementById('match-player1').className = `match-player ${isPlayer1 ? 'is-you' : ''}`;
+    document.getElementById('match-player1').innerHTML = `
+        <div class="match-player-avatar">${avatar1}</div>
+        <div class="match-player-name">${player1.name}${isPlayer1 ? ' (Você)' : ''}</div>
+        <div class="match-player-badges">🎖️ ${player1.badges}</div>
+    `;
+    
+    document.getElementById('match-player2').className = `match-player ${isPlayer2 ? 'is-you' : ''}`;
+    document.getElementById('match-player2').innerHTML = `
+        <div class="match-player-avatar">${avatar2}</div>
+        <div class="match-player-name">${player2.name}${isPlayer2 ? ' (Você)' : ''}</div>
+        <div class="match-player-badges">🎖️ ${player2.badges}</div>
+    `;
+    
+    // Show start button ONLY for host
+    if (btnStartBattle && matchWaiting) {
+        if (isHost) {
+            btnStartBattle.classList.remove('hidden');
+            btnStartBattle.textContent = 'Iniciar Batalha!';
+            matchWaiting.classList.add('hidden');
+        } else {
+            btnStartBattle.classList.add('hidden');
+            matchWaiting.classList.remove('hidden');
+            matchWaiting.textContent = TournamentState.isParticipant 
+                ? 'Aguardando o anfitrião iniciar sua batalha...'
+                : 'Aguardando o anfitrião iniciar a batalha...';
+        }
+    }
+}
+
+/**
+ * Render Tournament Standings
+ */
+function renderTournamentStandings() {
+    const standingsList = document.getElementById('tournament-standings-list');
+    if (!standingsList) return;
+    
+    standingsList.innerHTML = '';
+    
+    // Add header showing badges needed to win
+    const badgesToWin = 5;
+    const header = document.createElement('div');
+    header.className = 'standings-header';
+    header.innerHTML = `<span class="standings-goal">🎯 Meta: ${badgesToWin} insígnias para vencer!</span>`;
+    standingsList.appendChild(header);
+    
+    // Sort players by badges, then by money
+    const sortedPlayers = [...TournamentState.players].sort((a, b) => {
+        if (b.badges !== a.badges) return b.badges - a.badges;
+        return b.money - a.money;
+    });
+    
+    sortedPlayers.forEach((player, index) => {
+        const rank = index + 1;
+        const rankClass = rank === 1 ? 'gold' : (rank === 2 ? 'silver' : (rank === 3 ? 'bronze' : ''));
+        const avatar = AVATARS[player.avatar_id - 1] || '😎';
+        const isYou = player.id == GameState.playerId;
+        const closeToWin = player.badges >= badgesToWin - 1; // 4+ badges
+        const isWinner = player.badges >= badgesToWin;
+        
+        const playerEl = document.createElement('div');
+        playerEl.className = `standings-player ${isYou ? 'is-you' : ''} ${closeToWin ? 'close-to-win' : ''} ${isWinner ? 'has-won' : ''}`;
+        
+        const badgesDisplay = `${player.badges}/${badgesToWin}`;
+        
+        playerEl.innerHTML = `
+            <span class="standings-rank ${rankClass}">#${rank}</span>
+            <span class="standings-player-avatar">${avatar}</span>
+            <div class="standings-player-info">
+                <div class="standings-player-name">${player.player_name}${isYou ? ' (Você)' : ''}</div>
+                <div class="standings-player-badges">🎖️ ${badgesDisplay} ${isWinner ? '👑' : ''}</div>
+            </div>
+            <span class="standings-player-money">R$${player.money}</span>
+        `;
+        
+        standingsList.appendChild(playerEl);
+    });
+}
+
+/**
+ * Start the next battle
+ */
+async function startNextBattle() {
+    if (!TournamentState.currentMatch) {
+        showToast('Nenhuma partida disponível', 'warning');
+        return;
+    }
+    
+    // Only host can start battles
+    if (String(GameState.playerId) !== String(TournamentState.hostPlayerId)) {
+        showToast('Apenas o anfitrião pode iniciar batalhas', 'warning');
+        return;
+    }
+    
+    setLoading(true);
+    
+    try {
+        const result = await apiCall('api/tournament.php', {
+            action: 'start_match',
+            room_code: GameState.roomCode,
+            match_index: TournamentState.currentMatch.match_index,
+            player_id: GameState.playerId
+        });
+        
+        if (result.success) {
+            showToast('Batalha iniciando!', 'success');
+            // Battle phase transition will be handled by SSE
+        } else {
+            showToast(result.error || 'Falha ao iniciar batalha', 'error');
+        }
+    } catch (error) {
+        console.error('Error starting battle:', error);
+        showToast('Erro ao iniciar batalha', 'error');
+    }
+    
+    setLoading(false);
+}
+
+/**
+ * Complete tournament and move to next phase
+ */
+async function completeTournament() {
+    // Only host can advance to next route
+    if (String(GameState.playerId) !== String(TournamentState.hostPlayerId)) {
+        showToast('Apenas o anfitrião pode avançar para a próxima rota', 'warning');
+        return;
+    }
+    
+    setLoading(true);
+    
+    try {
+        const result = await apiCall('api/tournament.php', {
+            action: 'complete_tournament',
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId
+        });
+        
+        if (result.success) {
+            if (result.game_finished) {
+                showToast(`🏆 ${result.winner.name} venceu o jogo!`, 'success');
+                // Will transition to victory screen via SSE
+            } else {
+                showToast(`Avançando para a Rota ${result.new_route}!`, 'success');
+                // Will transition to catching phase via SSE
+            }
+        } else {
+            showToast(result.error || 'Falha ao completar torneio', 'error');
+        }
+    } catch (error) {
+        console.error('Error completing tournament:', error);
+        showToast('Erro ao completar torneio', 'error');
+    }
+    
+    setLoading(false);
+}
+
+/**
+ * Handle Tournament SSE events
+ */
+function handleTournamentEvent(eventType, data) {
+    console.log('handleTournamentEvent:', eventType, data);
+    
+    switch (eventType) {
+        case 'battle_started':
+            console.log('Battle started event - transitioning to battle screen');
+            // Check if this is an NPC battle
+            if (data.is_npc_battle) {
+                const npcName = data.player2?.name || 'Líder de Ginásio';
+                const npcTitle = data.player2?.title || '';
+                showToast(`🏟️ Desafio de Ginásio: ${data.player1?.name} vs ${npcName}!`, 'info');
+            } else {
+                showToast(`Batalha: ${data?.player1?.name || 'Jogador 1'} vs ${data?.player2?.name || 'Jogador 2'}!`, 'info');
+            }
+            // Transition to battle screen
+            handleGameStateChange('battle');
+            break;
+            
+        case 'match_completed':
+            showToast(`${data.winner_name} venceu a partida!`, 'info');
+            refreshTournamentState();
+            break;
+            
+        case 'tournament_updated':
+            refreshTournamentState();
+            break;
+            
+        case 'game_finished':
+            let winMessage = `🏆 ${data.winner_name} venceu o jogo!`;
+            if (data.win_type === 'badges') {
+                winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || 5} insígnias!`;
+            } else if (data.win_type === 'most_badges') {
+                winMessage = `🏆 ${data.winner_name} venceu com mais insígnias!`;
+            } else if (data.win_type === 'tiebreaker') {
+                winMessage = `🏆 ${data.winner_name} venceu o desempate e o jogo!`;
+            }
+            showToast(winMessage, 'success');
+            handleGameStateChange('finished');
+            break;
+    }
+}
+
+// ============================================
+// END TOURNAMENT PHASE FUNCTIONS
+// ============================================
+
+// ============================================
+// BATTLE PHASE FUNCTIONS
+// ============================================
+
+/**
+ * Initialize Battle Phase
+ */
+async function initBattlePhase() {
+    console.log('Initializing Battle Phase...');
+    console.log('GameState.roomCode:', GameState.roomCode);
+    
+    // Clear any existing auto-turn timer
+    if (BattleState.autoTurnTimer) {
+        clearTimeout(BattleState.autoTurnTimer);
+        BattleState.autoTurnTimer = null;
+    }
+    
+    // Reset battle log display
+    if (DOM.battleLogMessages) {
+        DOM.battleLogMessages.innerHTML = '';
+    } else {
+        console.error('DOM.battleLogMessages not found!');
+    }
+    
+    // Fetch current battle state
+    try {
+        console.log('Fetching battle state...');
+        const result = await apiCall(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
+        
+        console.log('Battle state result:', result);
+        
+        if (!result.success) {
+            console.error('Battle state fetch failed:', result.error);
+            showToast(result.error || 'Falha ao carregar batalha', 'error');
+            return;
+        }
+        
+        const battleState = result.battle_state;
+        
+        // Store NPC battle info
+        BattleState.isNpcBattle = result.is_npc_battle || battleState.is_npc_battle || false;
+        BattleState.npcData = result.npc_data || battleState.npc_data || null;
+        
+        // Determine if we are a participant (player1 is always human in NPC battles)
+        BattleState.isMyBattle = (GameState.playerId == battleState.player1_id || 
+                                   (!BattleState.isNpcBattle && GameState.playerId == battleState.player2_id));
+        BattleState.amPlayer1 = (GameState.playerId == battleState.player1_id);
+        
+        // Store state
+        BattleState.player1 = result.player1;
+        BattleState.player2 = result.player2;
+        BattleState.player1Team = battleState.player1_team;
+        BattleState.player2Team = battleState.player2_team;
+        BattleState.player1Active = battleState.player1_active;
+        BattleState.player2Active = battleState.player2_active;
+        BattleState.player1HasSelected = battleState.player1_has_selected || (battleState.player1_active !== null);
+        BattleState.player2HasSelected = battleState.player2_has_selected || (battleState.player2_active !== null);
+        BattleState.phase = battleState.phase;
+        BattleState.currentTurn = battleState.current_turn;
+        BattleState.turnNumber = battleState.turn_number;
+        BattleState.battleLog = battleState.battle_log || [];
+        BattleState.typeMatchups = result.type_matchups || null;
+        
+        // Render initial battle UI
+        renderBattleHeader();
+        renderBattleArena();
+        renderBattleTeamPreviews();
+        updateBattleStatus();
+        
+        // Show selection panel if in selection phase and we're a participant
+        if (battleState.phase === 'selection' && BattleState.isMyBattle) {
+            const myHasSelected = BattleState.amPlayer1 
+                ? BattleState.player1HasSelected 
+                : BattleState.player2HasSelected;
+            
+            if (!myHasSelected) {
+                showPokemonSelectionPanel();
+            } else {
+                showWaitingForOpponent();
+            }
         } else if (battleState.phase === 'selection' && !BattleState.isMyBattle) {
             // Spectator - hide selection panel, show spectator message
             hidePokemonSelectionPanel();
@@ -4610,8 +5457,14 @@ async function loadVictoryScreen() {
 
 /**
  * Check for existing session on page load
+ * This is a fallback for when restoreBackendSession hasn't reconnected yet
+ * (e.g., if the account was restored but no active game was found via restore,
+ *  but the PHP session still has room data)
  */
 async function checkExistingSession() {
+    // If we already reconnected via restoreBackendSession, skip
+    if (GameState.roomCode) return;
+    
     try {
         // Try to get room state if we have session data
         const result = await apiCall(`${API.room}?action=get_room`, {}, 'GET');
@@ -4624,7 +5477,7 @@ async function checkExistingSession() {
             const currentPlayer = result.players.find(p => p.id == result.current_player_id);
             if (currentPlayer) {
                 GameState.playerId = currentPlayer.id;
-                GameState.playerNumber = currentPlayer.player_number;
+                GameState.playerNumber = parseInt(currentPlayer.player_number);
                 GameState.isHost = currentPlayer.is_host;
                 GameState.players = result.players;
                 
