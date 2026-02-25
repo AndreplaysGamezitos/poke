@@ -127,7 +127,7 @@ function selectStarter() {
     }
     
     // Check room is in initial phase
-    $stmt = $db->prepare("SELECT game_state, current_player_turn FROM rooms WHERE id = ?");
+    $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
     $stmt->execute([$roomId]);
     $room = $stmt->fetch();
     
@@ -267,9 +267,11 @@ function selectStarter() {
             $checked++;
         }
         
-        // Update next player's turn
-        $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ? WHERE id = ?");
-        $stmt->execute([$nextTurn, $roomId]);
+        // Update next player's turn and set new selection deadline
+        $newDeadline = time() + 10;
+        $newGameData = json_encode(['selection_deadline' => $newDeadline]);
+        $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ?, game_data = ? WHERE id = ?");
+        $stmt->execute([$nextTurn, $newGameData, $roomId]);
         
         // Add selection event
         addGameEvent($roomId, 'starter_selected', [
@@ -277,7 +279,8 @@ function selectStarter() {
             'player_number' => $player['player_number'],
             'pokemon_id' => $pokemonId,
             'pokemon_name' => $pokemon['name'],
-            'next_turn' => $nextTurn
+            'next_turn' => $nextTurn,
+            'selection_deadline' => $newDeadline
         ]);
         
         jsonResponse([
@@ -314,9 +317,16 @@ function getSelectionState() {
     }
     
     // Get room state
-    $stmt = $db->prepare("SELECT game_state, current_player_turn FROM rooms WHERE id = ?");
+    $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
     $stmt->execute([$roomId]);
     $room = $stmt->fetch();
+    
+    // Extract selection_deadline from game_data
+    $selectionDeadline = null;
+    if ($room['game_data']) {
+        $gd = json_decode($room['game_data'], true);
+        $selectionDeadline = $gd['selection_deadline'] ?? null;
+    }
     
     // Get all players with their selections
     $stmt = $db->prepare("
@@ -336,7 +346,8 @@ function getSelectionState() {
         'game_state' => $room['game_state'],
         'current_turn' => $room['current_player_turn'],
         'players' => $players,
-        'current_player_id' => $_SESSION['player_id'] ?? null
+        'current_player_id' => $_SESSION['player_id'] ?? null,
+        'selection_deadline' => $selectionDeadline
     ]);
 }
 

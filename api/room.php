@@ -409,9 +409,13 @@ function startGame() {
     // Randomize who picks first for initial selection
     $randomFirstPicker = rand(0, $playerCount - 1);
     
+    // Store selection deadline in game_data so the timer survives page refreshes
+    $selectionDeadline = time() + 10;
+    $gameData = json_encode(['selection_deadline' => $selectionDeadline]);
+    
     // Update room state to initial (starter selection) with randomized first picker
-    $stmt = $db->prepare("UPDATE rooms SET game_state = 'initial', current_player_turn = ? WHERE id = ?");
-    $stmt->execute([$randomFirstPicker, $roomId]);
+    $stmt = $db->prepare("UPDATE rooms SET game_state = 'initial', current_player_turn = ?, game_data = ? WHERE id = ?");
+    $stmt->execute([$randomFirstPicker, $gameData, $roomId]);
     
     // Get first picker's name for the event
     $stmt = $db->prepare("SELECT player_name FROM players WHERE room_id = ? AND player_number = ?");

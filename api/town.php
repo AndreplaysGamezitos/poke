@@ -102,6 +102,13 @@ function getTownState($pdo) {
         return;
     }
     
+    // Extract town_deadline from game_data
+    $townDeadline = null;
+    if ($room['game_data']) {
+        $gd = json_decode($room['game_data'], true);
+        $townDeadline = $gd['town_deadline'] ?? null;
+    }
+    
     // Get current player info
     $stmt = $pdo->prepare("
         SELECT * FROM players WHERE id = ? AND room_id = ?
@@ -161,7 +168,8 @@ function getTownState($pdo) {
         'room' => [
             'id' => $room['id'],
             'current_route' => $room['current_route'],
-            'game_state' => $room['game_state']
+            'game_state' => $room['game_state'],
+            'town_deadline' => $townDeadline
         ],
         'player' => [
             'id' => $player['id'],

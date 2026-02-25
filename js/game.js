@@ -325,6 +325,12 @@ function setupEventListeners() {
             if (GameState.initialSelectionDeadline) {
                 tickInitialSelectionTimer();
             }
+            if (GameState.catchingDeadline) {
+                tickCatchingTimer();
+            }
+            if (GameState.townDeadline) {
+                tickTownTimer();
+            }
         }
     });
     
@@ -2102,7 +2108,8 @@ function renderStarterSelection() {
         DOM.initialTurnIndicator.style.color = '#4ade80';
         // Start the countdown timer only if it's not already running
         if (!GameState.initialSelectionTimerInterval) {
-            startInitialSelectionTimer();
+            const serverDeadline = state.selection_deadline || null;
+            startInitialSelectionTimer(serverDeadline);
         }
     } else {
         if (currentPlayer) {
@@ -2344,46 +2351,69 @@ function stopGameStateWatchdog() {
 
 /**
  * Start the catching phase countdown timer (5 seconds per turn).
+ * Uses an absolute deadline so the timer stays accurate after tab switches.
  * Only runs on the current player's client. Auto-catches if time runs out.
+ * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
  */
-function startCatchingTimer() {
+function startCatchingTimer(serverDeadline = null) {
     stopCatchingTimer();
     
     // Only start the timer if it's our turn and there's a wild Pokemon
     if (!GameState.isMyTurn || !GameState.wildPokemon) return;
     
-    GameState.catchingTimerSeconds = 5;
+    // Calculate absolute deadline in milliseconds
+    if (serverDeadline) {
+        GameState.catchingDeadline = serverDeadline * 1000; // server sends seconds
+    } else {
+        GameState.catchingDeadline = Date.now() + 5000; // 5 s fallback
+    }
     
     const timerEl = document.getElementById('catching-countdown');
     const timerValueEl = document.getElementById('catching-timer-value');
     if (!timerEl || !timerValueEl) return;
     
-    // Show timer and set initial value
-    timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
-    timerValueEl.textContent = GameState.catchingTimerSeconds;
+    // Immediately render first frame
+    tickCatchingTimer();
     
+    // Tick every 250 ms for responsive display; deadline math keeps it accurate
     GameState.catchingTimerInterval = setInterval(() => {
-        GameState.catchingTimerSeconds--;
-        timerValueEl.textContent = Math.max(0, GameState.catchingTimerSeconds);
+        tickCatchingTimer();
+    }, 250);
+}
+
+/**
+ * Single tick of the catching timer – computes remaining time from deadline.
+ */
+function tickCatchingTimer() {
+    if (!GameState.catchingDeadline) return;
+    
+    const remaining = Math.max(0, GameState.catchingDeadline - Date.now());
+    const secondsLeft = Math.ceil(remaining / 1000);
+    
+    const timerEl = document.getElementById('catching-countdown');
+    const timerValueEl = document.getElementById('catching-timer-value');
+    if (timerEl && timerValueEl) {
+        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
+        timerValueEl.textContent = Math.max(0, secondsLeft);
         
-        // Visual urgency
-        if (GameState.catchingTimerSeconds <= 2) {
+        if (secondsLeft <= 2) {
             timerEl.classList.remove('timer-warning');
             timerEl.classList.add('timer-critical');
-        } else if (GameState.catchingTimerSeconds <= 3) {
+        } else if (secondsLeft <= 3) {
+            timerEl.classList.remove('timer-critical');
             timerEl.classList.add('timer-warning');
+        } else {
+            timerEl.classList.remove('timer-warning', 'timer-critical');
         }
-        
-        // Time's up — auto-catch
-        if (GameState.catchingTimerSeconds <= 0) {
-            stopCatchingTimer();
-            console.log('[Timer] Catching timer expired — auto-catching');
-            // Only auto-catch if it's still our turn and there's a wild Pokemon
-            if (GameState.isMyTurn && GameState.wildPokemon && !GameState.catchAnimationInProgress) {
-                attemptCatch(false);
-            }
+    }
+    
+    if (remaining <= 0) {
+        stopCatchingTimer();
+        console.log('[Timer] Catching timer expired — auto-catching');
+        if (GameState.isMyTurn && GameState.wildPokemon && !GameState.catchAnimationInProgress) {
+            attemptCatch(false);
         }
-    }, 1000);
+    }
 }
 
 /**
@@ -2395,6 +2425,7 @@ function stopCatchingTimer() {
         GameState.catchingTimerInterval = null;
     }
     GameState.catchingTimerSeconds = 0;
+    GameState.catchingDeadline = null;
     
     const timerEl = document.getElementById('catching-countdown');
     if (timerEl) {
@@ -2411,11 +2442,17 @@ function stopCatchingTimer() {
  * Start a 10-second countdown for the initial Pokémon selection.
  * Uses an absolute deadline so the timer stays accurate even when the
  * browser throttles setInterval (e.g. when the tab is in the background).
+ * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
  */
-function startInitialSelectionTimer() {
+function startInitialSelectionTimer(serverDeadline = null) {
     stopInitialSelectionTimer();
 
-    GameState.initialSelectionDeadline = Date.now() + 10000; // 10 s from now
+    // Calculate absolute deadline in milliseconds
+    if (serverDeadline) {
+        GameState.initialSelectionDeadline = serverDeadline * 1000; // server sends seconds
+    } else {
+        GameState.initialSelectionDeadline = Date.now() + 10000; // 10 s from now (fallback)
+    }
 
     // Immediately render the first frame
     tickInitialSelectionTimer();
@@ -2502,43 +2539,66 @@ function autoSelectStarter() {
 
 /**
  * Start the town phase countdown timer (60 seconds).
- * Runs on all clients. When it hits 0, the host auto-readies everyone.
+ * Uses an absolute deadline so the timer stays accurate after tab switches.
+ * Runs on all clients. When it hits 0, auto-readies the player.
+ * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
  */
-function startTownTimer() {
+function startTownTimer(serverDeadline = null) {
     stopTownTimer();
     
-    GameState.townTimerSeconds = 60;
+    // Calculate absolute deadline in milliseconds
+    if (serverDeadline) {
+        GameState.townDeadline = serverDeadline * 1000; // server sends seconds
+    } else {
+        GameState.townDeadline = Date.now() + 60000; // 60 s fallback
+    }
     
     const timerEl = document.getElementById('town-countdown');
     const timerValueEl = document.getElementById('town-timer-value');
     if (!timerEl || !timerValueEl) return;
     
-    // Show timer and set initial value
-    timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
-    timerValueEl.textContent = GameState.townTimerSeconds;
+    // Immediately render first frame
+    tickTownTimer();
     
+    // Tick every 250 ms for responsive display; deadline math keeps it accurate
     GameState.townTimerInterval = setInterval(() => {
-        GameState.townTimerSeconds--;
-        timerValueEl.textContent = Math.max(0, GameState.townTimerSeconds);
+        tickTownTimer();
+    }, 250);
+}
+
+/**
+ * Single tick of the town timer – computes remaining time from deadline.
+ */
+function tickTownTimer() {
+    if (!GameState.townDeadline) return;
+    
+    const remaining = Math.max(0, GameState.townDeadline - Date.now());
+    const secondsLeft = Math.ceil(remaining / 1000);
+    
+    const timerEl = document.getElementById('town-countdown');
+    const timerValueEl = document.getElementById('town-timer-value');
+    if (timerEl && timerValueEl) {
+        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
+        timerValueEl.textContent = Math.max(0, secondsLeft);
         
-        // Visual urgency
-        if (GameState.townTimerSeconds <= 10) {
+        if (secondsLeft <= 10) {
             timerEl.classList.remove('timer-warning');
             timerEl.classList.add('timer-critical');
-        } else if (GameState.townTimerSeconds <= 20) {
+        } else if (secondsLeft <= 20) {
+            timerEl.classList.remove('timer-critical');
             timerEl.classList.add('timer-warning');
+        } else {
+            timerEl.classList.remove('timer-warning', 'timer-critical');
         }
-        
-        // Time's up — auto-ready this player
-        if (GameState.townTimerSeconds <= 0) {
-            stopTownTimer();
-            console.log('[Timer] Town timer expired — auto-readying');
-            // If we're not already ready, toggle ready
-            if (!TownState.isReady) {
-                toggleTownReady();
-            }
+    }
+    
+    if (remaining <= 0) {
+        stopTownTimer();
+        console.log('[Timer] Town timer expired — auto-readying');
+        if (!TownState.isReady) {
+            toggleTownReady();
         }
-    }, 1000);
+    }
 }
 
 /**
@@ -2550,6 +2610,7 @@ function stopTownTimer() {
         GameState.townTimerInterval = null;
     }
     GameState.townTimerSeconds = 0;
+    GameState.townDeadline = null;
     
     const timerEl = document.getElementById('town-countdown');
     if (timerEl) {
@@ -2648,7 +2709,7 @@ function renderCatchingUI(data) {
     renderWildPokemon(wildPokemon);
     
     // Update turn indicator
-    renderTurnIndicator(players, room.current_player_turn);
+    renderTurnIndicator(players, room.current_player_turn, room.turn_deadline);
     
     // Update action buttons
     updateActionButtons(wildPokemon);
@@ -2744,7 +2805,7 @@ function renderWildPokemon(pokemon) {
 /**
  * Render turn indicator
  */
-function renderTurnIndicator(players, currentTurn) {
+function renderTurnIndicator(players, currentTurn, turnDeadline = null) {
     const currentPlayer = players.find(p => p.player_number == currentTurn);
     
     if (DOM.currentTurnName && currentPlayer) {
@@ -2766,7 +2827,7 @@ function renderTurnIndicator(players, currentTurn) {
         // Only restart the timer if it's not already running
         // (avoids resetting the timer on every state refresh within the same turn)
         if (!GameState.catchingTimerInterval) {
-            startCatchingTimer();
+            startCatchingTimer(turnDeadline);
         }
     } else {
         stopCatchingTimer();
@@ -3197,8 +3258,8 @@ async function initTownPhase() {
     // Setup town event listeners
     setupTownListeners();
     
-    // Start the 60-second town countdown timer
-    startTownTimer();
+    // Start the town countdown timer, synced to server deadline
+    startTownTimer(GameState.townServerDeadline || null);
 }
 
 /**
@@ -3257,6 +3318,11 @@ async function refreshTownState() {
         TownState.players = result.players;
         TownState.shopPrices = result.shop_prices || TownState.shopPrices;
         GameState.currentRoute = result.room.current_route;
+        
+        // Store the server-provided town deadline for timer sync
+        if (result.room.town_deadline) {
+            GameState.townServerDeadline = result.room.town_deadline;
+        }
         
         // Render UI
         renderTownUI();

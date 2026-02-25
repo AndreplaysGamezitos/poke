@@ -168,6 +168,13 @@ function getCatchingState() {
     if ($minTurns === PHP_INT_MAX) $minTurns = 0;
     $currentCycle = $minTurns + 1;
     
+    // Extract turn_deadline from game_data
+    $turnDeadline = null;
+    if ($room['game_data']) {
+        $gd = json_decode($room['game_data'], true);
+        $turnDeadline = $gd['turn_deadline'] ?? null;
+    }
+    
     jsonResponse([
         'success' => true,
         'room' => [
@@ -179,7 +186,8 @@ function getCatchingState() {
             'current_cycle' => min($currentCycle, TURNS_PER_PLAYER),
             'all_turns_done' => $allDone,
             // Keep encounters_remaining for backward compat (informational only)
-            'encounters_remaining' => $room['encounters_remaining']
+            'encounters_remaining' => $room['encounters_remaining'],
+            'turn_deadline' => $turnDeadline
         ],
         'wild_pokemon' => $wildPokemon,
         'players' => $players,
@@ -271,13 +279,20 @@ function spawnWildPokemon() {
     ");
     $stmt->execute([$roomId, $pokemon['id'], $wildHp, $wildHp]);
     
+    // Set turn deadline now that a wild Pokemon is available
+    $turnDeadline = time() + 5;
+    $turnGameData = json_encode(['turn_deadline' => $turnDeadline]);
+    $stmtGD = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
+    $stmtGD->execute([$turnGameData, $roomId]);
+    
     // Add game event
     addGameEvent($roomId, 'wild_pokemon_appeared', [
         'pokemon_id' => $pokemon['id'],
         'pokemon_name' => $pokemon['name'],
         'sprite_url' => $pokemon['sprite_url'],
         'hp' => $wildHp,
-        'max_hp' => $wildHp
+        'max_hp' => $wildHp,
+        'turn_deadline' => $turnDeadline
     ]);
     
     jsonResponse([
@@ -699,14 +714,18 @@ function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
     
     if ($allDone) {
         // All players have used all their turns — end catching phase, move to town
+        // Store town_deadline in game_data (60 seconds for town phase)
+        $townDeadline = time() + 60;
+        $townGameData = json_encode(['town_deadline' => $townDeadline]);
         $stmt = $db->prepare("
             UPDATE rooms 
             SET game_state = 'town', 
                 current_player_turn = 0,
-                encounters_remaining = 0
+                encounters_remaining = 0,
+                game_data = ?
             WHERE id = ?
         ");
-        $stmt->execute([$roomId]);
+        $stmt->execute([$townGameData, $roomId]);
         
         // Give all players town income
         $stmt = $db->prepare("UPDATE players SET money = money + ? WHERE room_id = ?");
@@ -750,9 +769,11 @@ function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
         }
     }
     
-    // Update room with next player's turn
-    $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ? WHERE id = ?");
-    $stmt->execute([$nextTurn, $roomId]);
+    // Update room with next player's turn and set turn deadline
+    $turnDeadline = time() + 5;
+    $turnGameData = json_encode(['turn_deadline' => $turnDeadline]);
+    $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ?, game_data = ? WHERE id = ?");
+    $stmt->execute([$nextTurn, $turnGameData, $roomId]);
     
     // Get current player's updated turns info for the event
     $currentPlayerTurns = 0;
@@ -767,7 +788,8 @@ function advanceTurn($db, $roomId, $room, $encounterEnded = false) {
         'player_turn' => $nextTurn,
         'previous_player_turns_taken' => $currentPlayerTurns,
         'turns_per_player' => TURNS_PER_PLAYER,
-        'encounter_ended' => $encounterEnded
+        'encounter_ended' => $encounterEnded,
+        'turn_deadline' => $turnDeadline
     ]);
 }
 
