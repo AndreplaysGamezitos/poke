@@ -7,6 +7,9 @@
 require_once '../config.php';
 require_once __DIR__ . '/broadcast.php';
 
+// Only execute the API routing if this file is called directly (not included)
+if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'town.php') {
+
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -74,6 +77,8 @@ switch ($action) {
     default:
         echo json_encode(['success' => false, 'error' => 'Invalid action']);
 }
+
+} // end if (called directly)
 
 /**
  * Get current town phase state

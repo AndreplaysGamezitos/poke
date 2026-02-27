@@ -1452,6 +1452,7 @@ switch ($action) {
             // Transition to battle phase
             $battleState['phase'] = 'battle';
             $battleState['turn_number'] = 1;
+            $battleState['turn_deadline'] = time() + 8;
             
             // Determine who goes first based on speed
             $p1Pokemon = $battleState['player1_team'][$battleState['player1_active']];
@@ -1759,6 +1760,7 @@ switch ($action) {
                         // NPC selects immediately, continue battle
                         $needsSelection = false;
                         $battleState['phase'] = 'battle';
+                        $battleState['turn_deadline'] = time() + 8;
                         
                         // Recalculate speed for turn order
                         $playerPokemon = $battleState['player1_team'][$battleState['player1_active']];
@@ -1799,6 +1801,7 @@ switch ($action) {
             // Switch turns
             $battleState['current_turn'] = $isPlayer1Turn ? 'player2' : 'player1';
             $battleState['turn_number']++;
+            $battleState['turn_deadline'] = time() + 8;
         }
         
         // Save state
@@ -1890,6 +1893,7 @@ switch ($action) {
         
         // Return to battle phase
         $battleState['phase'] = 'battle';
+        $battleState['turn_deadline'] = time() + 8;
         unset($battleState['waiting_for']);
         
         // Get player info
@@ -2411,6 +2415,7 @@ switch ($action) {
                         $newNpcPokemon = $battleState['player2_team'][$npcNextPokemon];
                         $needsSelection = false;
                         $battleState['phase'] = 'battle';
+                        $battleState['turn_deadline'] = time() + 8;
                         
                         $playerPokemon = $battleState['player1_team'][$battleState['player1_active']];
                         if ($playerPokemon['base_speed'] >= $newNpcPokemon['base_speed']) {
@@ -2450,6 +2455,7 @@ switch ($action) {
         } else {
             $battleState['current_turn'] = $isPlayer1Turn ? 'player2' : 'player1';
             $battleState['turn_number']++;
+            $battleState['turn_deadline'] = time() + 8;
         }
         
         updateTournamentState($pdo, $room['id'], $tournamentData);
@@ -2547,6 +2553,7 @@ switch ($action) {
         if ($bothSelected && $battleState['phase'] === 'selection') {
             $battleState['phase'] = 'battle';
             $battleState['turn_number'] = 1;
+            $battleState['turn_deadline'] = time() + 8;
             $p1Pokemon = $battleState['player1_team'][$battleState['player1_active']];
             $p2Pokemon = $battleState['player2_team'][$battleState['player2_active']];
             
@@ -2637,6 +2644,7 @@ switch ($action) {
         }
         
         $battleState['phase'] = 'battle';
+        $battleState['turn_deadline'] = time() + 8;
         unset($battleState['waiting_for']);
         
         $player = getPlayerById($pdo, $playerId);

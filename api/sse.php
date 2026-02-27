@@ -5,6 +5,7 @@
  */
 
 require_once __DIR__ . '/../config.php';
+require_once __DIR__ . '/enforce_deadlines.php';
 
 // IMPORTANT: Close session immediately to prevent blocking other requests
 // SSE keeps a long-running connection, and PHP sessions are locked by default
@@ -71,6 +72,16 @@ while (true) {
     // Poll for new events every second
     if ($now - $lastPoll >= 1) {
         $lastPoll = $now;
+        
+        // --- SERVER-SIDE DEADLINE ENFORCEMENT ---
+        // On every tick, check if any phase deadline has passed and auto-act.
+        // This ensures the game progresses even if all players are idle/disconnected.
+        try {
+            enforceRoomDeadlines($roomId);
+        } catch (Exception $e) {
+            // Log but don't crash the SSE stream
+            error_log("SSE deadline enforcement error for room $roomId: " . $e->getMessage());
+        }
         
         // Get new events
         $stmt = $db->prepare("

@@ -7,6 +7,9 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/broadcast.php';
 
+// Only execute the API routing if this file is called directly (not included)
+if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'pokemon.php') {
+
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -41,6 +44,8 @@ try {
 } catch (Exception $e) {
     jsonResponse(['error' => 'Server error: ' . $e->getMessage()], 500);
 }
+
+} // end if (called directly)
 
 /**
  * Get available starter Pokemon based on player count in room
