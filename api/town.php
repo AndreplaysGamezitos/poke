@@ -1153,8 +1153,8 @@ function toggleReady($pdo) {
         $stmt = $pdo->prepare("UPDATE players SET is_ready = 0 WHERE room_id = ?");
         $stmt->execute([$room['id']]);
         
-        // Update game state to tournament
-        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament' WHERE id = ?");
+        // Update game state to tournament (clear old game_data so brackets are generated fresh)
+        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament', game_data = NULL WHERE id = ?");
         $stmt->execute([$room['id']]);
         
         // Log phase transition (town-specific event)

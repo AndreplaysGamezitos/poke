@@ -67,11 +67,28 @@ function enforceRoomDeadlines($roomId) {
             return enforceBattleDeadlines($db, $roomId, $room, $gd);
             
         case 'tournament':
-            // Tournament phase itself has no timer — it auto-advances via
-            // ranked_complete_tournament or host action. However, if we're in
-            // ranked mode and all matches are complete, auto-advance.
             if (($room['game_mode'] ?? 'casual') === 'ranked') {
-                return enforceRankedTournamentComplete($db, $roomId, $room, $gd);
+                // First: if brackets exist and all are complete, auto-advance
+                if (isset($gd['brackets'])) {
+                    $allComplete = true;
+                    $hasPending = false;
+                    foreach ($gd['brackets'] as $b) {
+                        if (($b['status'] ?? '') !== 'completed') $allComplete = false;
+                        if (($b['status'] ?? '') === 'pending') $hasPending = true;
+                    }
+                    if ($allComplete) {
+                        return enforceRankedTournamentComplete($db, $roomId, $room, $gd);
+                    }
+                    // If battles haven't been started yet and there are pending brackets,
+                    // auto-start all battles after a delay (replaces client-side host-only countdown)
+                    if ($hasPending && empty($gd['all_battles_started'])) {
+                        return enforceRankedAutoStartBattles($db, $roomId, $room, $gd);
+                    }
+                } else {
+                    // No brackets yet (game_data was NULL or missing brackets) —
+                    // generate them now so the tournament can proceed
+                    return enforceRankedGenerateBrackets($db, $roomId);
+                }
             }
             break;
     }
@@ -579,6 +596,285 @@ function getPlayerByIdSafe($db, $playerId) {
     $stmt = $db->prepare("SELECT * FROM players WHERE id = ?");
     $stmt->execute([$playerId]);
     return $stmt->fetch();
+}
+
+/**
+ * In ranked mode, generate brackets when tournament state has no game_data.
+ * This handles the case where town->tournament transition set game_data = NULL.
+ */
+function enforceRankedGenerateBrackets($db, $roomId) {
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare("SELECT game_state, game_data, game_mode, current_route FROM rooms WHERE id = ? FOR UPDATE");
+        $stmt->execute([$roomId]);
+        $room = $stmt->fetch();
+        
+        if (!$room || $room['game_state'] !== 'tournament' || ($room['game_mode'] ?? 'casual') !== 'ranked') {
+            $db->commit();
+            return false;
+        }
+        
+        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
+        if (isset($gd['brackets'])) {
+            $db->commit();
+            return false; // Already has brackets
+        }
+        
+        // Load tournament.php functions
+        require_once __DIR__ . '/tournament.php';
+        
+        $currentRoute = $room['current_route'] ?? 1;
+        
+        // Get players
+        $stmt = $db->prepare("
+            SELECT p.*, 
+                   (SELECT COUNT(*) FROM player_pokemon WHERE player_id = p.id) as pokemon_count
+            FROM players p 
+            WHERE p.room_id = ? 
+            ORDER BY p.badges DESC, p.player_number ASC
+        ");
+        $stmt->execute([$roomId]);
+        $players = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        
+        if (count($players) < 2) {
+            $db->commit();
+            return false;
+        }
+        
+        // Generate brackets using tournament.php function
+        // (generateBrackets writes to game_data internally, but we call it here)
+        $tournamentData = generateBrackets($db, $roomId, $players, $currentRoute);
+        
+        // Set a start_deadline so auto-start fires after 12 seconds
+        $tournamentData['start_deadline'] = time() + 12;
+        $stmt = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
+        $stmt->execute([json_encode($tournamentData), $roomId]);
+        
+        $db->commit();
+        
+        broadcastEvent($roomId, 'tournament_brackets_generated', [
+            'brackets' => $tournamentData['brackets'],
+            'total_matches' => $tournamentData['total_matches'],
+            'auto_enforced' => true
+        ]);
+        
+        return true;
+    } catch (\Exception $e) {
+        $db->rollBack();
+        error_log("enforceRankedGenerateBrackets error: " . $e->getMessage());
+        return false;
+    }
+}
+
+/**
+ * In ranked mode, auto-start all pending battles after a delay.
+ * This replaces the client-side host-only countdown mechanism.
+ * Sets a start_deadline on first call, then starts battles when deadline passes.
+ */
+function enforceRankedAutoStartBattles($db, $roomId, $room, $gd) {
+    // Check if we have a start_deadline set
+    $startDeadline = $gd['start_deadline'] ?? null;
+    
+    if (!$startDeadline) {
+        // First call: set the deadline (12 seconds, matching client countdown + buffer)
+        $db->beginTransaction();
+        try {
+            $stmt = $db->prepare("SELECT game_state, game_data FROM rooms WHERE id = ? FOR UPDATE");
+            $stmt->execute([$roomId]);
+            $lockedRoom = $stmt->fetch();
+            
+            if (!$lockedRoom || $lockedRoom['game_state'] !== 'tournament') {
+                $db->commit();
+                return false;
+            }
+            
+            $lockedGd = $lockedRoom['game_data'] ? json_decode($lockedRoom['game_data'], true) : [];
+            if (!empty($lockedGd['all_battles_started']) || !empty($lockedGd['start_deadline'])) {
+                $db->commit();
+                return false;
+            }
+            
+            $lockedGd['start_deadline'] = time() + 12;
+            $stmt = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
+            $stmt->execute([json_encode($lockedGd), $roomId]);
+            $db->commit();
+            return true; // We set the deadline, will start on next enforcement tick
+        } catch (\Exception $e) {
+            $db->rollBack();
+            error_log("enforceRankedAutoStartBattles set deadline error: " . $e->getMessage());
+            return false;
+        }
+    }
+    
+    // Deadline exists — check if it has passed
+    if (time() <= $startDeadline) {
+        return false; // Not yet
+    }
+    
+    // Time to auto-start all battles!
+    $db->beginTransaction();
+    try {
+        $stmt = $db->prepare("SELECT game_state, game_data, current_route FROM rooms WHERE id = ? FOR UPDATE");
+        $stmt->execute([$roomId]);
+        $lockedRoom = $stmt->fetch();
+        
+        if (!$lockedRoom || $lockedRoom['game_state'] !== 'tournament') {
+            $db->commit();
+            return false;
+        }
+        
+        $tournamentData = $lockedRoom['game_data'] ? json_decode($lockedRoom['game_data'], true) : [];
+        
+        if (empty($tournamentData['brackets']) || !empty($tournamentData['all_battles_started'])) {
+            $db->commit();
+            return false;
+        }
+        
+        $currentRoute = $tournamentData['current_route'] ?? $lockedRoom['current_route'] ?? 1;
+        $battleStates = [];
+        
+        // Initialize battle state for every pending match
+        foreach ($tournamentData['brackets'] as &$bracket) {
+            if ($bracket['status'] !== 'pending') continue;
+            
+            $bracket['status'] = 'in_progress';
+            $matchIndex = $bracket['match_index'];
+            $player1Id = $bracket['player1_id'];
+            $player2Id = $bracket['player2_id'];
+            $isNpcBattle = !empty($bracket['is_npc_battle']);
+            
+            // Get player 1 team
+            $stmtTeam = $db->prepare("
+                SELECT pp.id as team_id, pp.pokemon_id, pp.current_hp, pp.current_exp, 
+                       pp.is_active, pp.team_position,
+                       pp.bonus_hp, pp.bonus_attack, pp.bonus_speed,
+                       pd.name, pd.type_defense, pd.type_attack, pd.base_hp, 
+                       pd.base_attack, pd.base_speed, pd.evolution_id, pd.evolution_number,
+                       pd.sprite_url
+                FROM player_pokemon pp
+                JOIN pokemon_dex pd ON pp.pokemon_id = pd.id
+                WHERE pp.player_id = ?
+                ORDER BY pp.team_position ASC
+            ");
+            $stmtTeam->execute([$player1Id]);
+            $player1Team = $stmtTeam->fetchAll(PDO::FETCH_ASSOC);
+            
+            if ($isNpcBattle) {
+                // Load tournament.php functions if needed
+                if (!function_exists('createGymLeaderBattleState')) {
+                    require_once __DIR__ . '/tournament.php';
+                }
+                $bs = createGymLeaderBattleState($db, $player1Id, $player1Team, $currentRoute);
+                $bs['match_index'] = $matchIndex;
+                $npcSelectedIndex = npcSelectPokemon($bs);
+                if ($npcSelectedIndex !== null) {
+                    $bs['player2_active'] = $npcSelectedIndex;
+                }
+            } else {
+                $stmtTeam->execute([$player2Id]);
+                $player2Team = $stmtTeam->fetchAll(PDO::FETCH_ASSOC);
+                
+                $bs = [
+                    'match_index' => $matchIndex,
+                    'player1_id' => $player1Id,
+                    'player2_id' => $player2Id,
+                    'is_npc_battle' => false,
+                    'player1_team' => array_map(function($p) {
+                        $bonusHp = (int)($p['bonus_hp'] ?? 0);
+                        $bonusAtk = (int)($p['bonus_attack'] ?? 0);
+                        $bonusSpd = (int)($p['bonus_speed'] ?? 0);
+                        $battleHp = ceil($p['base_hp'] / 10 * 3) + $bonusHp;
+                        return [
+                            'team_id' => $p['team_id'], 'pokemon_id' => $p['pokemon_id'],
+                            'name' => $p['name'], 'type_defense' => $p['type_defense'],
+                            'type_attack' => $p['type_attack'], 'base_hp' => $p['base_hp'],
+                            'base_attack' => $p['base_attack'] + $bonusAtk,
+                            'base_speed' => $p['base_speed'] + $bonusSpd,
+                            'battle_hp' => $battleHp, 'current_hp' => $battleHp,
+                            'sprite_url' => $p['sprite_url'], 'is_fainted' => false,
+                            'bonus_hp' => $bonusHp, 'bonus_attack' => $bonusAtk, 'bonus_speed' => $bonusSpd
+                        ];
+                    }, $player1Team),
+                    'player2_team' => array_map(function($p) {
+                        $bonusHp = (int)($p['bonus_hp'] ?? 0);
+                        $bonusAtk = (int)($p['bonus_attack'] ?? 0);
+                        $bonusSpd = (int)($p['bonus_speed'] ?? 0);
+                        $battleHp = ceil($p['base_hp'] / 10 * 3) + $bonusHp;
+                        return [
+                            'team_id' => $p['team_id'], 'pokemon_id' => $p['pokemon_id'],
+                            'name' => $p['name'], 'type_defense' => $p['type_defense'],
+                            'type_attack' => $p['type_attack'], 'base_hp' => $p['base_hp'],
+                            'base_attack' => $p['base_attack'] + $bonusAtk,
+                            'base_speed' => $p['base_speed'] + $bonusSpd,
+                            'battle_hp' => $battleHp, 'current_hp' => $battleHp,
+                            'sprite_url' => $p['sprite_url'], 'is_fainted' => false,
+                            'bonus_hp' => $bonusHp, 'bonus_attack' => $bonusAtk, 'bonus_speed' => $bonusSpd
+                        ];
+                    }, $player2Team),
+                    'player1_active' => null,
+                    'player2_active' => null,
+                    'current_turn' => null,
+                    'phase' => 'selection',
+                    'selection_deadline' => time() + 10,
+                    'turn_number' => 0,
+                    'battle_log' => []
+                ];
+            }
+            
+            $battleStates[$matchIndex] = $bs;
+        }
+        unset($bracket);
+        
+        $tournamentData['all_battles_started'] = true;
+        $tournamentData['battle_states'] = $battleStates;
+        unset($tournamentData['start_deadline']);
+        
+        $stmt = $db->prepare("UPDATE rooms SET game_state = 'battle', game_data = ? WHERE id = ?");
+        $stmt->execute([json_encode($tournamentData), $roomId]);
+        
+        $db->commit();
+        
+        // Build broadcast data
+        $matchesInfo = [];
+        foreach ($tournamentData['brackets'] as $bracket) {
+            if ($bracket['status'] !== 'in_progress') continue;
+            $p1 = getPlayerByIdSafe($db, $bracket['player1_id']);
+            $isNpc = !empty($bracket['is_npc_battle']);
+            $matchInfo = [
+                'match_index' => $bracket['match_index'],
+                'is_npc_battle' => $isNpc,
+                'player1' => ['id' => $bracket['player1_id'], 'name' => $p1 ? $p1['player_name'] : 'Player'],
+            ];
+            if ($isNpc) {
+                if (!function_exists('getGymLeaderData')) {
+                    require_once __DIR__ . '/tournament.php';
+                }
+                $gymLeader = getGymLeaderData($currentRoute);
+                $matchInfo['player2'] = [
+                    'id' => 'npc_gym_leader', 'name' => $gymLeader['name'],
+                    'title' => $gymLeader['title'], 'avatar' => $gymLeader['avatar'], 'is_npc' => true
+                ];
+            } else {
+                $p2 = getPlayerByIdSafe($db, $bracket['player2_id']);
+                $matchInfo['player2'] = ['id' => $bracket['player2_id'], 'name' => $p2 ? $p2['player_name'] : 'Player'];
+            }
+            $matchesInfo[] = $matchInfo;
+        }
+        
+        broadcastEvent($roomId, 'all_battles_started', [
+            'matches' => $matchesInfo,
+            'game_mode' => 'ranked',
+            'auto_enforced' => true
+        ]);
+        
+        error_log("enforceRankedAutoStartBattles: Auto-started all battles for room $roomId");
+        return true;
+        
+    } catch (\Exception $e) {
+        $db->rollBack();
+        error_log("enforceRankedAutoStartBattles error: " . $e->getMessage());
+        return false;
+    }
 }
 
 /**
