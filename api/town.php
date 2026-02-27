@@ -109,6 +109,30 @@ function getTownState($pdo) {
         $townDeadline = $gd['town_deadline'] ?? null;
     }
     
+    // --- SERVER-SIDE DEADLINE ENFORCEMENT ---
+    // If the town deadline has passed, auto-ready all unready players
+    if ($room['game_state'] === 'town' && $townDeadline && time() > $townDeadline) {
+        $enforced = enforceTownDeadline($pdo, $room['id']);
+        if ($enforced) {
+            // Re-fetch room — phase may have changed to tournament
+            $stmt = $pdo->prepare("
+                SELECT r.*, 
+                       (SELECT COUNT(*) FROM players WHERE room_id = r.id) as player_count
+                FROM rooms r 
+                WHERE r.room_code = ?
+            ");
+            $stmt->execute([$roomCode]);
+            $room = $stmt->fetch();
+            
+            // Re-extract deadline (may be null now)
+            $townDeadline = null;
+            if ($room['game_data']) {
+                $gd = json_decode($room['game_data'], true);
+                $townDeadline = $gd['town_deadline'] ?? null;
+            }
+        }
+    }
+    
     // Get current player info
     $stmt = $pdo->prepare("
         SELECT * FROM players WHERE id = ? AND room_id = ?
@@ -1149,6 +1173,79 @@ function toggleReady($pdo) {
         'total_players' => (int)$counts['total'],
         'all_ready' => $allReady
     ]);
+}
+
+/**
+ * Enforce town deadline: auto-ready all unready players.
+ * If all become ready, transition to tournament phase.
+ * @return bool True if enforcement action was taken
+ */
+function enforceTownDeadline($pdo, $roomId) {
+    // Use a transaction with row-level locking to prevent race conditions
+    $pdo->beginTransaction();
+    try {
+        // Lock the room row
+        $stmt = $pdo->prepare("SELECT game_state, game_data FROM rooms WHERE id = ? FOR UPDATE");
+        $stmt->execute([$roomId]);
+        $room = $stmt->fetch();
+        
+        if (!$room || $room['game_state'] !== 'town') {
+            $pdo->commit();
+            return false;
+        }
+        
+        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
+        $townDeadline = $gd['town_deadline'] ?? null;
+        
+        if (!$townDeadline || time() <= $townDeadline) {
+            $pdo->commit();
+            return false;
+        }
+        
+    // Set all unready players to ready
+    $stmt = $pdo->prepare("UPDATE players SET is_ready = 1 WHERE room_id = ? AND is_ready = 0");
+    $stmt->execute([$roomId]);
+    $affectedRows = $stmt->rowCount();
+    
+    if ($affectedRows === 0) {
+        $pdo->commit();
+        return false; // Everyone was already ready
+    }
+    
+    // Broadcast auto-ready event
+    broadcastEvent($roomId, 'town_deadline_enforced', [
+        'message' => 'Town timer expired — all players auto-readied!'
+    ]);
+    
+    // Check if all players are now ready (they should be)
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*) as total, SUM(is_ready) as ready 
+        FROM players WHERE room_id = ?
+    ");
+    $stmt->execute([$roomId]);
+    $counts = $stmt->fetch();
+    
+    if ($counts['ready'] == $counts['total']) {
+        // All ready — transition to tournament phase
+        $stmt = $pdo->prepare("UPDATE players SET is_ready = 0 WHERE room_id = ?");
+        $stmt->execute([$roomId]);
+        
+        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament', game_data = NULL WHERE id = ?");
+        $stmt->execute([$roomId]);
+        
+        broadcastEvent($roomId, 'phase_changed', [
+            'new_phase' => 'tournament',
+            'message' => 'Town timer expired! Starting Tournament Phase...'
+        ]);
+    }
+    
+        $pdo->commit();
+    } catch (Exception $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
+    
+    return true;
 }
 
 /**

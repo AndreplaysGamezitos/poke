@@ -989,9 +989,16 @@ switch ($action) {
             exit;
         }
         
+        // Guard: only advance if the room is still in tournament phase
+        if ($room['game_state'] !== 'tournament') {
+            echo json_encode(['success' => true, 'already_advanced' => true, 'message' => 'Already advanced']);
+            exit;
+        }
+        
         $currentRoute = $room['current_route'];
-        $maxRoutes = 8;
-        $badgesToWin = 5;
+        $isRanked = (($room['game_mode'] ?? 'casual') === 'ranked');
+        $maxRoutes = $isRanked ? RANKED_TOTAL_ROUTES : TOTAL_ROUTES;
+        $badgesToWin = $isRanked ? RANKED_BADGES_TO_WIN : BADGES_TO_WIN;
         
         // Get all players with their badges
         $players = getPlayersInRoom($pdo, $room['id']);
@@ -1009,7 +1016,7 @@ switch ($action) {
         
         // VICTORY CONDITION CHECK
         if (count($playersWithWinningBadges) === 1) {
-            // Single winner with 5+ badges
+            // Single winner with enough badges
             $winner = $playersWithWinningBadges[0];
             
             $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'finished', game_data = ? WHERE id = ?");
@@ -2676,10 +2683,17 @@ switch ($action) {
             exit;
         }
         
+        // Guard: only advance if the room is still in tournament phase
+        // (prevents multiple clients from advancing the route simultaneously)
+        if ($room['game_state'] !== 'tournament') {
+            echo json_encode(['success' => true, 'already_advanced' => true, 'message' => 'Already advanced']);
+            exit;
+        }
+        
         // Use the same completion logic as complete_tournament but without host check
         $currentRoute = $room['current_route'];
-        $maxRoutes = 8;
-        $badgesToWin = 5;
+        $maxRoutes = RANKED_TOTAL_ROUTES;
+        $badgesToWin = RANKED_BADGES_TO_WIN;
         
         $players = getPlayersInRoom($pdo, $room['id']);
         

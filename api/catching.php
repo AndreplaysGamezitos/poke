@@ -79,6 +79,50 @@ function getCatchingState() {
     $stmt->execute([$roomId]);
     $room = $stmt->fetch();
     
+    // --- SERVER-SIDE DEADLINE ENFORCEMENT ---
+    // If the turn deadline has passed and it's still the catching phase,
+    // auto-catch (regular ball) for the current player and advance the turn.
+    if ($room['game_state'] === 'catching' && $room['game_data']) {
+        $gd = json_decode($room['game_data'], true);
+        $turnDeadline = $gd['turn_deadline'] ?? null;
+        
+        if ($turnDeadline && time() > $turnDeadline) {
+            $enforced = enforceCatchingDeadline($db, $roomId);
+            if ($enforced) {
+                // Re-fetch room state — phase or turn may have changed
+                $stmt = $db->prepare("
+                    SELECT r.*, rt.route_name, rt.background_url
+                    FROM rooms r
+                    LEFT JOIN routes rt ON r.current_route = rt.route_number
+                    WHERE r.id = ?
+                ");
+                $stmt->execute([$roomId]);
+                $room = $stmt->fetch();
+                
+                // If phase changed away from catching, return early with updated state
+                if ($room['game_state'] !== 'catching') {
+                    jsonResponse([
+                        'success' => true,
+                        'room' => [
+                            'game_state' => $room['game_state'],
+                            'current_route' => $room['current_route'],
+                            'route_name' => $room['route_name'] ?? null,
+                            'current_player_turn' => $room['current_player_turn'],
+                            'turns_per_player' => TURNS_PER_PLAYER,
+                            'current_cycle' => TURNS_PER_PLAYER,
+                            'all_turns_done' => true,
+                            'encounters_remaining' => 0,
+                            'turn_deadline' => null
+                        ],
+                        'wild_pokemon' => null,
+                        'players' => [],
+                        'current_player_id' => $_SESSION['player_id'] ?? null
+                    ]);
+                }
+            }
+        }
+    }
+    
     // Get current wild Pokemon
     $stmt = $db->prepare("
         SELECT wp.*, pd.name, pd.type_defense, pd.type_attack, 
@@ -967,4 +1011,172 @@ function addGameEvent($roomId, $eventType, $eventData) {
     // Use centralized broadcast function (writes to DB + sends to WebSocket)
     broadcastEvent($roomId, $eventType, $eventData);
 }
-?>
+
+/**
+ * Enforce catching deadline: auto-catch (regular ball) for the current player
+ * and advance the turn. Loops if multiple consecutive turns have timed out.
+ * @return bool True if any auto-action occurred
+ */
+function enforceCatchingDeadline($db, $roomId) {
+    $didAutoAction = false;
+    
+    // Use a transaction with row-level locking to prevent race conditions
+    $db->beginTransaction();
+    try {
+        // Lock the room row
+        $stmt = $db->prepare("SELECT * FROM rooms WHERE id = ? FOR UPDATE");
+        $stmt->execute([$roomId]);
+        $room = $stmt->fetch();
+        
+        if (!$room || $room['game_state'] !== 'catching') {
+            $db->commit();
+            return false;
+        }
+        
+        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
+        $turnDeadline = $gd['turn_deadline'] ?? null;
+        
+        if (!$turnDeadline || time() <= $turnDeadline) {
+            $db->commit();
+            return false;
+        }
+    
+    $maxIterations = 50; // safety net (e.g. 4 players × 8 turns = 32 max)
+    for ($iter = 0; $iter < $maxIterations; $iter++) {
+        // Re-fetch room state each iteration
+        $stmt = $db->prepare("SELECT * FROM rooms WHERE id = ?");
+        $stmt->execute([$roomId]);
+        $room = $stmt->fetch();
+        
+        if ($room['game_state'] !== 'catching') {
+            break; // Phase changed (all turns done → town)
+        }
+        
+        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
+        $turnDeadline = $gd['turn_deadline'] ?? null;
+        
+        if (!$turnDeadline || time() <= $turnDeadline) {
+            break; // Deadline hasn't passed yet
+        }
+        
+        $currentTurnNumber = $room['current_player_turn'];
+        
+        // Get current player
+        $stmt = $db->prepare("SELECT id, player_number, player_name, ultra_balls, turns_taken FROM players WHERE room_id = ? AND player_number = ?");
+        $stmt->execute([$roomId, $currentTurnNumber]);
+        $player = $stmt->fetch();
+        
+        if (!$player) break;
+        
+        // Check if this player still has turns left
+        if ($player['turns_taken'] >= TURNS_PER_PLAYER) {
+            // This player is done — advance to next player and set new deadline
+            $stmt = $db->prepare("SELECT id, player_number, turns_taken FROM players WHERE room_id = ? ORDER BY player_number");
+            $stmt->execute([$roomId]);
+            $allPlayers = $stmt->fetchAll();
+            $playerCount = count($allPlayers);
+            
+            // Find next player with remaining turns
+            $nextTurn = ($currentTurnNumber + 1) % $playerCount;
+            for ($i = 0; $i < $playerCount; $i++) {
+                $candidateNumber = ($currentTurnNumber + 1 + $i) % $playerCount;
+                foreach ($allPlayers as $p) {
+                    if ($p['player_number'] == $candidateNumber && $p['turns_taken'] < TURNS_PER_PLAYER) {
+                        $nextTurn = $candidateNumber;
+                        break 2;
+                    }
+                }
+            }
+            
+            $newDeadline = time() + 5;
+            $newGameData = json_encode(['turn_deadline' => $newDeadline]);
+            $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ?, game_data = ? WHERE id = ?");
+            $stmt->execute([$nextTurn, $newGameData, $roomId]);
+            $didAutoAction = true;
+            continue;
+        }
+        
+        // Get active wild Pokemon
+        $stmt = $db->prepare("
+            SELECT wp.*, pd.name, pd.base_hp, pd.catch_rate, pd.sprite_url
+            FROM wild_pokemon wp
+            JOIN pokemon_dex pd ON wp.pokemon_id = pd.id
+            WHERE wp.room_id = ? AND wp.is_active = TRUE
+            LIMIT 1
+        ");
+        $stmt->execute([$roomId]);
+        $wildPokemon = $stmt->fetch();
+        
+        if (!$wildPokemon) {
+            // No wild Pokemon — try to spawn one, then set new deadline
+            spawnWildPokemonForRoom($db, $roomId);
+            $newDeadline = time() + 5;
+            $newGameData = json_encode(['turn_deadline' => $newDeadline]);
+            $stmt = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
+            $stmt->execute([$newGameData, $roomId]);
+            $didAutoAction = true;
+            continue;
+        }
+        
+        // Auto-catch attempt with regular ball
+        $baseCatchRate = $wildPokemon['catch_rate'] ?? 30;
+        $hpRatio = $wildPokemon['max_hp'] > 0 
+            ? $wildPokemon['current_hp'] / $wildPokemon['max_hp'] 
+            : 1;
+        $hpBonus = round((1 - $hpRatio) * 40);
+        $catchRate = min(95, $baseCatchRate + $hpBonus);
+        
+        $catchRoll = rand(0, 99);
+        $caught = ($catchRoll < $catchRate);
+        
+        if ($caught) {
+            // Check team size
+            $stmt = $db->prepare("SELECT COUNT(*) as count FROM player_pokemon WHERE player_id = ?");
+            $stmt->execute([$player['id']]);
+            $teamCount = $stmt->fetch()['count'];
+            
+            if ($teamCount >= 6) {
+                // Team full — give money
+                $stmt = $db->prepare("UPDATE players SET money = money + 2 WHERE id = ?");
+                $stmt->execute([$player['id']]);
+            } else {
+                // Add Pokemon to team
+                $stmt = $db->prepare("
+                    INSERT INTO player_pokemon (player_id, pokemon_id, current_hp, current_exp, is_active, team_position)
+                    VALUES (?, ?, ?, 0, FALSE, ?)
+                ");
+                $stmt->execute([$player['id'], $wildPokemon['pokemon_id'], $wildPokemon['base_hp'], $teamCount]);
+            }
+            
+            // Mark wild Pokemon as caught
+            $stmt = $db->prepare("UPDATE wild_pokemon SET is_active = FALSE WHERE id = ?");
+            $stmt->execute([$wildPokemon['id']]);
+        }
+        
+        // Broadcast auto-catch event
+        addGameEvent($roomId, 'catch_attempt', [
+            'player_id' => $player['id'],
+            'player_name' => $player['player_name'],
+            'pokemon_name' => $wildPokemon['name'],
+            'catch_roll' => $catchRoll,
+            'dice_roll' => $catchRoll,
+            'catch_rate' => $catchRate,
+            'used_ultra_ball' => false,
+            'caught' => $caught,
+            'team_full' => false,
+            'auto_action' => true
+        ]);
+        
+        // Advance turn (this increments turns_taken and handles phase transition)
+        advanceTurn($db, $roomId, $room, $caught);
+        $didAutoAction = true;
+    }
+    
+        $db->commit();
+    } catch (Exception $e) {
+        $db->rollBack();
+        throw $e;
+    }
+    
+    return $didAutoAction;
+}

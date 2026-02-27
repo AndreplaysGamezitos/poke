@@ -32,6 +32,9 @@ define('MAX_TEAM_SIZE', 6);
 
 // Route / Game structure
 define('TOTAL_ROUTES', 5);       // 5 merged routes
+define('RANKED_TOTAL_ROUTES', 4); // 4 routes in ranked mode
+define('BADGES_TO_WIN', 5);       // 5 badges to win in casual mode
+define('RANKED_BADGES_TO_WIN', 4); // 4 badges to win in ranked mode
 define('EXP_TO_EVOLVE', 6);
 
 // Catch phase: each player gets 8 turns per route

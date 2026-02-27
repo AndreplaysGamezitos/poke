@@ -1487,7 +1487,8 @@ function connectSSE() {
         const playerNames = players.map(p => p.name).join(', ');
         
         if (reason === 'badges_draw') {
-            showToast(`🔥 DESEMPATE! ${playerNames} empataram com 5 insígnias! Eles devem batalhar!`, 'warning');
+            const badgeCount = players[0]?.badges || (GameState.gameMode === 'ranked' ? 4 : 5);
+            showToast(`🔥 DESEMPATE! ${playerNames} empataram com ${badgeCount} insígnias! Eles devem batalhar!`, 'warning');
         } else if (reason === 'final_draw') {
             showToast(`🔥 DESEMPATE FINAL! ${playerNames} empataram com mais insígnias!`, 'warning');
         }
@@ -2702,7 +2703,8 @@ function renderCatchingUI(data) {
         DOM.encountersRemaining.textContent = `Ciclo: ${currentCycle}/${turnsPerPlayer}`;
     }
     if (DOM.routeProgress) {
-        DOM.routeProgress.textContent = `Rota ${room.current_route}/5`;
+        const maxRoutes = (GameState.gameMode === 'ranked') ? 4 : 5;
+        DOM.routeProgress.textContent = `Rota ${room.current_route}/${maxRoutes}`;
     }
     
     // Update wild Pokemon display
@@ -3343,7 +3345,10 @@ function renderTownUI() {
     const ultraCount = document.getElementById('town-ultra-count');
     
     if (moneyDisplay) moneyDisplay.textContent = `R$ ${TownState.playerMoney}`;
-    if (routeIndicator) routeIndicator.textContent = `Rota ${GameState.currentRoute}/5`;
+    if (routeIndicator) {
+        const maxRoutes = (GameState.gameMode === 'ranked') ? 4 : 5;
+        routeIndicator.textContent = `Rota ${GameState.currentRoute}/${maxRoutes}`;
+    }
     if (ultraCount) ultraCount.textContent = TownState.ultraBalls;
     
     // Update shop button states
@@ -4058,7 +4063,8 @@ const TournamentState = {
     rankedCountdownTimer: null,
     rankedCountdownSeconds: 10,
     allBattlesStarted: false,
-    myMatchIndex: null
+    myMatchIndex: null,
+    _autoAdvanceScheduled: false
 };
 
 /**
@@ -4069,6 +4075,9 @@ async function initTournamentPhase() {
     
     // Stop any existing ranked countdown
     stopRankedCountdown();
+    
+    // Reset auto-advance guard for this new tournament phase
+    TournamentState._autoAdvanceScheduled = false;
     
     // Load tournament state from server
     await refreshTournamentState();
@@ -4179,7 +4188,10 @@ function renderTournamentUI() {
                 : '⚔️ TIEBREAKER BATTLE!';
         }
     } else {
-        if (routeDisplay) routeDisplay.textContent = `Rota ${GameState.currentRoute}/8`;
+        if (routeDisplay) {
+            const maxRoutes = TournamentState.gameMode === 'ranked' ? 4 : 5;
+            routeDisplay.textContent = `Rota ${GameState.currentRoute}/${maxRoutes}`;
+        }
         if (tournamentHeader) tournamentHeader.textContent = '🏆 Torneio';
     }
     
@@ -4363,6 +4375,7 @@ function renderCurrentMatchPanel() {
         
         if (isRanked) {
             // In ranked mode, auto-advance after a short delay
+            // Guard: only schedule one auto-advance timer
             const btnNextRoute = document.getElementById('btn-next-route');
             const waitingMsg = document.getElementById('tournament-complete-waiting');
             if (btnNextRoute) btnNextRoute.classList.add('hidden');
@@ -4370,10 +4383,14 @@ function renderCurrentMatchPanel() {
                 waitingMsg.classList.remove('hidden');
                 waitingMsg.textContent = 'Avançando automaticamente...';
             }
-            // Auto-advance after 3 seconds
-            setTimeout(() => {
-                rankedCompleteTournament();
-            }, 3000);
+            if (!TournamentState._autoAdvanceScheduled) {
+                TournamentState._autoAdvanceScheduled = true;
+                // Auto-advance after 3 seconds
+                setTimeout(() => {
+                    TournamentState._autoAdvanceScheduled = false;
+                    rankedCompleteTournament();
+                }, 3000);
+            }
         } else {
             // Casual mode: only host can advance
             const btnNextRoute = document.getElementById('btn-next-route');
@@ -4618,7 +4635,7 @@ function handleTournamentEvent(eventType, data) {
         case 'game_finished':
             let winMessage = `🏆 ${data.winner_name} venceu o jogo!`;
             if (data.win_type === 'badges') {
-                winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || 5} insígnias!`;
+                winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || (GameState.gameMode === 'ranked' ? 4 : 5)} insígnias!`;
             } else if (data.win_type === 'most_badges') {
                 winMessage = `🏆 ${data.winner_name} venceu com mais insígnias!`;
             } else if (data.win_type === 'tiebreaker') {
@@ -4730,7 +4747,11 @@ async function rankedCompleteTournament() {
         });
         
         if (result.success) {
-            if (result.game_finished) {
+            if (result.already_advanced) {
+                // Another client already advanced — refresh state to detect phase change
+                console.log('[Ranked] Tournament already advanced, refreshing state...');
+                refreshTournamentState();
+            } else if (result.game_finished) {
                 showToast(`🏆 ${result.winner.name} venceu o jogo!`, 'success');
             } else if (result.tiebreaker) {
                 showToast('🔥 DESEMPATE!', 'warning');
