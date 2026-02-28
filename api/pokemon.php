@@ -7,9 +7,6 @@
 require_once __DIR__ . '/../config.php';
 require_once __DIR__ . '/broadcast.php';
 
-// Only execute the API routing if this file is called directly (not included)
-if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'pokemon.php') {
-
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -44,8 +41,6 @@ try {
 } catch (Exception $e) {
     jsonResponse(['error' => 'Server error: ' . $e->getMessage()], 500);
 }
-
-} // end if (called directly)
 
 /**
  * Get available starter Pokemon based on player count in room
@@ -132,7 +127,7 @@ function selectStarter() {
     }
     
     // Check room is in initial phase
-    $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
+    $stmt = $db->prepare("SELECT game_state, current_player_turn FROM rooms WHERE id = ?");
     $stmt->execute([$roomId]);
     $room = $stmt->fetch();
     
@@ -210,31 +205,17 @@ function selectStarter() {
             SET game_state = 'catching', 
                 current_player_turn = ?,
                 current_route = 1,
-                encounters_remaining = 0
+                encounters_remaining = ? * ?
             WHERE id = ?
         ");
-        $stmt->execute([$randomFirstPlayer, $roomId]);
-        
-        // Reset turns_taken for all players in this room
-        $stmt = $db->prepare("UPDATE players SET turns_taken = 0 WHERE room_id = ?");
-        $stmt->execute([$roomId]);
+        $stmt->execute([$randomFirstPlayer, ENCOUNTERS_PER_PLAYER, $playerCount, $roomId]);
         
         // Get first player's name for the event
         $stmt = $db->prepare("SELECT player_name FROM players WHERE room_id = ? AND player_number = ?");
         $stmt->execute([$roomId, $randomFirstPlayer]);
         $firstPlayer = $stmt->fetch();
         
-        // Broadcast the last player's starter_selected event first
-        // so all other clients see the final pick before the phase change
-        addGameEvent($roomId, 'starter_selected', [
-            'player_id' => $playerId,
-            'player_number' => $player['player_number'],
-            'pokemon_id' => $pokemonId,
-            'pokemon_name' => $pokemon['name'],
-            'next_turn' => -1
-        ]);
-        
-        // Then broadcast phase change
+        // Add game event
         addGameEvent($roomId, 'phase_changed', [
             'new_phase' => 'catching',
             'route' => 1,
@@ -272,11 +253,9 @@ function selectStarter() {
             $checked++;
         }
         
-        // Update next player's turn and set new selection deadline
-        $newDeadline = time() + 10;
-        $newGameData = json_encode(['selection_deadline' => $newDeadline]);
-        $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ?, game_data = ? WHERE id = ?");
-        $stmt->execute([$nextTurn, $newGameData, $roomId]);
+        // Update next player's turn
+        $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ? WHERE id = ?");
+        $stmt->execute([$nextTurn, $roomId]);
         
         // Add selection event
         addGameEvent($roomId, 'starter_selected', [
@@ -284,8 +263,7 @@ function selectStarter() {
             'player_number' => $player['player_number'],
             'pokemon_id' => $pokemonId,
             'pokemon_name' => $pokemon['name'],
-            'next_turn' => $nextTurn,
-            'selection_deadline' => $newDeadline
+            'next_turn' => $nextTurn
         ]);
         
         jsonResponse([
@@ -322,33 +300,9 @@ function getSelectionState() {
     }
     
     // Get room state
-    $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
+    $stmt = $db->prepare("SELECT game_state, current_player_turn FROM rooms WHERE id = ?");
     $stmt->execute([$roomId]);
     $room = $stmt->fetch();
-    
-    // --- SERVER-SIDE DEADLINE ENFORCEMENT ---
-    // If the selection deadline has passed, auto-select for the current player
-    if ($room['game_state'] === 'initial' && $room['game_data']) {
-        $gd = json_decode($room['game_data'], true);
-        $selectionDeadline = $gd['selection_deadline'] ?? null;
-        
-        if ($selectionDeadline && time() > $selectionDeadline) {
-            $autoSelected = enforceSelectionDeadline($db, $roomId, $room);
-            if ($autoSelected) {
-                // Re-fetch room state after auto-selection (may have advanced turn or changed phase)
-                $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
-                $stmt->execute([$roomId]);
-                $room = $stmt->fetch();
-            }
-        }
-    }
-    
-    // Extract selection_deadline from game_data
-    $selectionDeadline = null;
-    if ($room['game_data']) {
-        $gd = json_decode($room['game_data'], true);
-        $selectionDeadline = $gd['selection_deadline'] ?? null;
-    }
     
     // Get all players with their selections
     $stmt = $db->prepare("
@@ -368,8 +322,7 @@ function getSelectionState() {
         'game_state' => $room['game_state'],
         'current_turn' => $room['current_player_turn'],
         'players' => $players,
-        'current_player_id' => $_SESSION['player_id'] ?? null,
-        'selection_deadline' => $selectionDeadline
+        'current_player_id' => $_SESSION['player_id'] ?? null
     ]);
 }
 
@@ -434,191 +387,5 @@ function getPokemonData() {
 function addGameEvent($roomId, $eventType, $eventData) {
     // Use centralized broadcast function (writes to DB + sends to WebSocket)
     broadcastEvent($roomId, $eventType, $eventData);
-}
-
-/**
- * Enforce selection deadline: auto-select a starter for the current player if deadline passed.
- * May loop if multiple consecutive players have timed out.
- * @return bool True if any auto-selection occurred, false otherwise
- */
-function enforceSelectionDeadline($db, $roomId, $room) {
-    $didAutoSelect = false;
-    
-    // Use a transaction with row-level locking to prevent race conditions
-    // (two clients polling simultaneously could both try to auto-select)
-    $db->beginTransaction();
-    try {
-        // Lock the room row to prevent concurrent enforcement
-        $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ? FOR UPDATE");
-        $stmt->execute([$roomId]);
-        $room = $stmt->fetch();
-        
-        if (!$room || $room['game_state'] !== 'initial') {
-            $db->commit();
-            return false;
-        }
-        
-        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
-        $selectionDeadline = $gd['selection_deadline'] ?? null;
-        
-        if (!$selectionDeadline || time() <= $selectionDeadline) {
-            $db->commit();
-            return false; // Deadline hasn't passed yet
-        }
-    
-    // Loop: if the deadline has passed and the current player still hasn't picked,
-    // auto-pick for them, set a new deadline, and check again (the next player
-    // may have also timed out if nobody was polling for a while).
-    $maxIterations = 20; // safety net
-    for ($iter = 0; $iter < $maxIterations; $iter++) {
-        // Re-fetch room state each iteration (already locked via FOR UPDATE)
-        $stmt = $db->prepare("SELECT game_state, current_player_turn, game_data FROM rooms WHERE id = ?");
-        $stmt->execute([$roomId]);
-        $room = $stmt->fetch();
-        
-        if ($room['game_state'] !== 'initial') {
-            break; // Phase already changed (all players picked)
-        }
-        
-        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
-        $selectionDeadline = $gd['selection_deadline'] ?? null;
-        
-        if (!$selectionDeadline || time() <= $selectionDeadline) {
-            break; // Deadline hasn't passed yet
-        }
-        
-        $currentTurn = $room['current_player_turn'];
-        
-        // Get the current player
-        $stmt = $db->prepare("SELECT id, player_number, player_name FROM players WHERE room_id = ? AND player_number = ?");
-        $stmt->execute([$roomId, $currentTurn]);
-        $currentPlayer = $stmt->fetch();
-        
-        if (!$currentPlayer) break;
-        
-        // Check if this player already has a Pokemon (shouldn't re-pick)
-        $stmt = $db->prepare("SELECT COUNT(*) as count FROM player_pokemon WHERE player_id = ?");
-        $stmt->execute([$currentPlayer['id']]);
-        if ($stmt->fetch()['count'] > 0) {
-            // Player already has a Pokemon somehow — advance turn
-            // This can happen in edge cases; just move to next
-            break;
-        }
-        
-        // Get total player count and number of starters needed
-        $stmt = $db->prepare("SELECT COUNT(*) as count FROM players WHERE room_id = ?");
-        $stmt->execute([$roomId]);
-        $playerCount = $stmt->fetch()['count'];
-        
-        // Get available starters using the same room-seeded randomization as getStarters()
-        // We need to know which starters are available for this room
-        $stmt = $db->prepare("
-            SELECT pd.id, pd.name, pd.base_hp, pd.sprite_url
-            FROM pokemon_dex pd
-            INNER JOIN starter_pokemon sp ON pd.id = sp.pokemon_id
-            WHERE pd.id NOT IN (
-                SELECT pp.pokemon_id FROM player_pokemon pp
-                INNER JOIN players p ON pp.player_id = p.id
-                WHERE p.room_id = ?
-            )
-            ORDER BY RAND()
-            LIMIT 1
-        ");
-        $stmt->execute([$roomId]);
-        $randomStarter = $stmt->fetch();
-        
-        if (!$randomStarter) break; // No starters available
-        
-        // Auto-assign the Pokemon to this player
-        $stmt = $db->prepare("
-            INSERT INTO player_pokemon (player_id, pokemon_id, current_hp, current_exp, is_active, team_position)
-            VALUES (?, ?, ?, 0, TRUE, 0)
-        ");
-        $stmt->execute([$currentPlayer['id'], $randomStarter['id'], $randomStarter['base_hp']]);
-        $didAutoSelect = true;
-        
-        // Broadcast the auto-selection
-        addGameEvent($roomId, 'starter_selected', [
-            'player_id' => $currentPlayer['id'],
-            'player_number' => $currentPlayer['player_number'],
-            'pokemon_id' => $randomStarter['id'],
-            'pokemon_name' => $randomStarter['name'],
-            'auto_selected' => true,
-            'next_turn' => -1 // will be updated below
-        ]);
-        
-        // Count how many have now selected
-        $stmt = $db->prepare("
-            SELECT COUNT(DISTINCT pp.player_id) as selected_count
-            FROM player_pokemon pp
-            INNER JOIN players p ON pp.player_id = p.id
-            WHERE p.room_id = ?
-        ");
-        $stmt->execute([$roomId]);
-        $selectedCount = $stmt->fetch()['selected_count'];
-        
-        if ($selectedCount >= $playerCount) {
-            // All players have selected — move to catching phase
-            $randomFirstPlayer = rand(0, $playerCount - 1);
-            
-            $stmt = $db->prepare("
-                UPDATE rooms 
-                SET game_state = 'catching', 
-                    current_player_turn = ?,
-                    current_route = 1,
-                    encounters_remaining = 0,
-                    game_data = NULL
-                WHERE id = ?
-            ");
-            $stmt->execute([$randomFirstPlayer, $roomId]);
-            
-            $stmt = $db->prepare("UPDATE players SET turns_taken = 0 WHERE room_id = ?");
-            $stmt->execute([$roomId]);
-            
-            $stmt = $db->prepare("SELECT player_name FROM players WHERE room_id = ? AND player_number = ?");
-            $stmt->execute([$roomId, $randomFirstPlayer]);
-            $firstPlayer = $stmt->fetch();
-            
-            addGameEvent($roomId, 'phase_changed', [
-                'new_phase' => 'catching',
-                'route' => 1,
-                'first_player' => $randomFirstPlayer,
-                'first_player_name' => $firstPlayer['player_name']
-            ]);
-            
-            break; // Done
-        } else {
-            // Find next player who hasn't selected yet
-            $stmt = $db->prepare("
-                SELECT p.player_number 
-                FROM player_pokemon pp
-                INNER JOIN players p ON pp.player_id = p.id
-                WHERE p.room_id = ?
-            ");
-            $stmt->execute([$roomId]);
-            $selectedPlayers = $stmt->fetchAll(PDO::FETCH_COLUMN);
-            
-            $nextTurn = ($currentTurn + 1) % $playerCount;
-            $checked = 0;
-            while (in_array($nextTurn, $selectedPlayers) && $checked < $playerCount) {
-                $nextTurn = ($nextTurn + 1) % $playerCount;
-                $checked++;
-            }
-            
-            // Set new deadline and advance turn
-            $newDeadline = time() + 10;
-            $newGameData = json_encode(['selection_deadline' => $newDeadline]);
-            $stmt = $db->prepare("UPDATE rooms SET current_player_turn = ?, game_data = ? WHERE id = ?");
-            $stmt->execute([$nextTurn, $newGameData, $roomId]);
-        }
-    }
-    
-        $db->commit();
-    } catch (Exception $e) {
-        $db->rollBack();
-        throw $e;
-    }
-    
-    return $didAutoSelect;
 }
 ?>

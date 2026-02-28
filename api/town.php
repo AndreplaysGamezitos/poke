@@ -7,9 +7,6 @@
 require_once '../config.php';
 require_once __DIR__ . '/broadcast.php';
 
-// Only execute the API routing if this file is called directly (not included)
-if (basename($_SERVER['SCRIPT_FILENAME'] ?? '') === 'town.php') {
-
 header('Content-Type: application/json');
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -56,15 +53,6 @@ switch ($action) {
     case 'mega_evolve':
         megaEvolvePokemon($pdo);
         break;
-    case 'buy_hp_boost':
-        buyStatBoost($pdo, 'hp');
-        break;
-    case 'buy_attack_boost':
-        buyStatBoost($pdo, 'attack');
-        break;
-    case 'buy_speed_boost':
-        buyStatBoost($pdo, 'speed');
-        break;
     case 'sell_pokemon':
         sellPokemon($pdo);
         break;
@@ -77,8 +65,6 @@ switch ($action) {
     default:
         echo json_encode(['success' => false, 'error' => 'Invalid action']);
 }
-
-} // end if (called directly)
 
 /**
  * Get current town phase state
@@ -107,37 +93,6 @@ function getTownState($pdo) {
         return;
     }
     
-    // Extract town_deadline from game_data
-    $townDeadline = null;
-    if ($room['game_data']) {
-        $gd = json_decode($room['game_data'], true);
-        $townDeadline = $gd['town_deadline'] ?? null;
-    }
-    
-    // --- SERVER-SIDE DEADLINE ENFORCEMENT ---
-    // If the town deadline has passed, auto-ready all unready players
-    if ($room['game_state'] === 'town' && $townDeadline && time() > $townDeadline) {
-        $enforced = enforceTownDeadline($pdo, $room['id']);
-        if ($enforced) {
-            // Re-fetch room — phase may have changed to tournament
-            $stmt = $pdo->prepare("
-                SELECT r.*, 
-                       (SELECT COUNT(*) FROM players WHERE room_id = r.id) as player_count
-                FROM rooms r 
-                WHERE r.room_code = ?
-            ");
-            $stmt->execute([$roomCode]);
-            $room = $stmt->fetch();
-            
-            // Re-extract deadline (may be null now)
-            $townDeadline = null;
-            if ($room['game_data']) {
-                $gd = json_decode($room['game_data'], true);
-                $townDeadline = $gd['town_deadline'] ?? null;
-            }
-        }
-    }
-    
     // Get current player info
     $stmt = $pdo->prepare("
         SELECT * FROM players WHERE id = ? AND room_id = ?
@@ -150,10 +105,9 @@ function getTownState($pdo) {
         return;
     }
     
-    // Get player's team with Pokemon details (including mega evolution info and stat bonuses)
+    // Get player's team with Pokemon details (including mega evolution info)
     $stmt = $pdo->prepare("
         SELECT pp.id, pp.pokemon_id, pp.team_position, pp.current_exp, pp.is_active, pp.is_mega,
-               pp.bonus_hp, pp.bonus_attack, pp.bonus_speed,
                pd.name, pd.type_defense as type, pd.base_hp as hp, pd.base_attack as attack, 
                pd.base_speed as speed, pd.sprite_url, pd.evolution_id, pd.evolution_number,
                pd.has_mega, pd.mega_evolution_id,
@@ -197,8 +151,7 @@ function getTownState($pdo) {
         'room' => [
             'id' => $room['id'],
             'current_route' => $room['current_route'],
-            'game_state' => $room['game_state'],
-            'town_deadline' => $townDeadline
+            'game_state' => $room['game_state']
         ],
         'player' => [
             'id' => $player['id'],
@@ -229,10 +182,7 @@ function getTownState($pdo) {
                 'has_mega' => (bool)($p['has_mega'] ?? false),
                 'mega_evolution_id' => $p['mega_evolution_id'] ?? null,
                 'mega_name' => $p['mega_name'] ?? null,
-                'mega_sprite_url' => $p['mega_sprite_url'] ?? null,
-                'bonus_hp' => (int)($p['bonus_hp'] ?? 0),
-                'bonus_attack' => (int)($p['bonus_attack'] ?? 0),
-                'bonus_speed' => (int)($p['bonus_speed'] ?? 0)
+                'mega_sprite_url' => $p['mega_sprite_url'] ?? null
             ];
         }, $team),
         'players' => $players,
@@ -241,10 +191,7 @@ function getTownState($pdo) {
         'shop_prices' => [
             'ultra_ball' => PRICE_ULTRA_BALL,
             'evo_soda' => PRICE_EVO_SODA,
-            'mega_stone' => PRICE_MEGA_STONE,
-            'hp_boost' => PRICE_HP_BOOST,
-            'attack_boost' => PRICE_ATTACK_BOOST,
-            'speed_boost' => PRICE_SPEED_BOOST
+            'mega_stone' => PRICE_MEGA_STONE
         ]
     ]);
 }
@@ -788,130 +735,6 @@ function megaEvolvePokemon($pdo) {
 }
 
 /**
- * Buy a stat boost item for the active Pokemon
- * @param string $statType 'hp', 'attack', or 'speed'
- */
-function buyStatBoost($pdo, $statType) {
-    $data = getRequestData();
-    $roomCode = $data['room_code'] ?? '';
-    $playerId = $data['player_id'] ?? '';
-    
-    if (empty($roomCode) || empty($playerId)) {
-        echo json_encode(['success' => false, 'error' => 'Missing parameters']);
-        return;
-    }
-    
-    // Validate stat type and get constants
-    $statConfig = [
-        'hp' => ['price' => PRICE_HP_BOOST, 'value' => HP_BOOST_VALUE, 'column' => 'bonus_hp', 'name' => 'HP Up', 'icon' => '❤️'],
-        'attack' => ['price' => PRICE_ATTACK_BOOST, 'value' => ATTACK_BOOST_VALUE, 'column' => 'bonus_attack', 'name' => 'Protein', 'icon' => '⚔️'],
-        'speed' => ['price' => PRICE_SPEED_BOOST, 'value' => SPEED_BOOST_VALUE, 'column' => 'bonus_speed', 'name' => 'Carbos', 'icon' => '💨']
-    ];
-    
-    if (!isset($statConfig[$statType])) {
-        echo json_encode(['success' => false, 'error' => 'Invalid stat type']);
-        return;
-    }
-    
-    $config = $statConfig[$statType];
-    
-    // Get room
-    $stmt = $pdo->prepare("SELECT id FROM rooms WHERE room_code = ? AND game_state = 'town'");
-    $stmt->execute([$roomCode]);
-    $room = $stmt->fetch();
-    
-    if (!$room) {
-        echo json_encode(['success' => false, 'error' => 'Invalid room or not in town phase']);
-        return;
-    }
-    
-    // Get player
-    $stmt = $pdo->prepare("SELECT * FROM players WHERE id = ? AND room_id = ?");
-    $stmt->execute([$playerId, $room['id']]);
-    $player = $stmt->fetch();
-    
-    if (!$player) {
-        echo json_encode(['success' => false, 'error' => 'Player not found']);
-        return;
-    }
-    
-    // Check money
-    if ($player['money'] < $config['price']) {
-        echo json_encode(['success' => false, 'error' => 'Not enough money']);
-        return;
-    }
-    
-    // Get active Pokemon
-    $stmt = $pdo->prepare("
-        SELECT pp.*, pd.name
-        FROM player_pokemon pp
-        JOIN pokemon_dex pd ON pp.pokemon_id = pd.id
-        WHERE pp.player_id = ? AND pp.is_active = TRUE
-        LIMIT 1
-    ");
-    $stmt->execute([$playerId]);
-    $activePokemon = $stmt->fetch();
-    
-    if (!$activePokemon) {
-        echo json_encode(['success' => false, 'error' => 'No active Pokemon']);
-        return;
-    }
-    
-    $pdo->beginTransaction();
-    
-    try {
-        // Deduct money
-        $stmt = $pdo->prepare("UPDATE players SET money = money - ? WHERE id = ?");
-        $stmt->execute([$config['price'], $playerId]);
-        
-        // Add stat bonus to active Pokemon
-        $column = $config['column'];
-        $stmt = $pdo->prepare("UPDATE player_pokemon SET {$column} = {$column} + ? WHERE id = ?");
-        $stmt->execute([$config['value'], $activePokemon['id']]);
-        
-        $pdo->commit();
-        
-        // Log the event
-        logTownEvent($pdo, $room['id'], 'purchase', [
-            'player_id' => $playerId,
-            'player_name' => $player['player_name'],
-            'item' => $statType . '_boost',
-            'pokemon_name' => $activePokemon['name'],
-            'cost' => $config['price'],
-            'stat_type' => $statType,
-            'bonus_value' => $config['value']
-        ]);
-        
-        // Get updated data
-        $stmt = $pdo->prepare("SELECT money FROM players WHERE id = ?");
-        $stmt->execute([$playerId]);
-        $updated = $stmt->fetch();
-        
-        $stmt = $pdo->prepare("SELECT bonus_hp, bonus_attack, bonus_speed FROM player_pokemon WHERE id = ?");
-        $stmt->execute([$activePokemon['id']]);
-        $updatedPokemon = $stmt->fetch();
-        
-        echo json_encode([
-            'success' => true,
-            'message' => "{$config['icon']} {$activePokemon['name']} gained +{$config['value']} {$config['name']}!",
-            'new_money' => (int)$updated['money'],
-            'pokemon_name' => $activePokemon['name'],
-            'stat_type' => $statType,
-            'bonus_value' => $config['value'],
-            'total_bonus' => [
-                'hp' => (int)$updatedPokemon['bonus_hp'],
-                'attack' => (int)$updatedPokemon['bonus_attack'],
-                'speed' => (int)$updatedPokemon['bonus_speed']
-            ]
-        ]);
-        
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        echo json_encode(['success' => false, 'error' => 'Database error']);
-    }
-}
-
-/**
  * Sell a Pokemon
  */
 function sellPokemon($pdo) {
@@ -1153,19 +976,12 @@ function toggleReady($pdo) {
         $stmt = $pdo->prepare("UPDATE players SET is_ready = 0 WHERE room_id = ?");
         $stmt->execute([$room['id']]);
         
-        // Update game state to tournament (clear old game_data so brackets are generated fresh)
-        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament', game_data = NULL WHERE id = ?");
+        // Update game state to tournament
+        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament' WHERE id = ?");
         $stmt->execute([$room['id']]);
         
-        // Log phase transition (town-specific event)
+        // Log phase transition
         logTownEvent($pdo, $room['id'], 'phase_change', [
-            'new_phase' => 'tournament',
-            'message' => 'All players ready! Starting Tournament Phase...'
-        ]);
-        
-        // Also broadcast generic phase_changed event for consistency
-        // This ensures any client polling or listening for phase_changed will catch it
-        broadcastEvent($room['id'], 'phase_changed', [
             'new_phase' => 'tournament',
             'message' => 'All players ready! Starting Tournament Phase...'
         ]);
@@ -1178,79 +994,6 @@ function toggleReady($pdo) {
         'total_players' => (int)$counts['total'],
         'all_ready' => $allReady
     ]);
-}
-
-/**
- * Enforce town deadline: auto-ready all unready players.
- * If all become ready, transition to tournament phase.
- * @return bool True if enforcement action was taken
- */
-function enforceTownDeadline($pdo, $roomId) {
-    // Use a transaction with row-level locking to prevent race conditions
-    $pdo->beginTransaction();
-    try {
-        // Lock the room row
-        $stmt = $pdo->prepare("SELECT game_state, game_data FROM rooms WHERE id = ? FOR UPDATE");
-        $stmt->execute([$roomId]);
-        $room = $stmt->fetch();
-        
-        if (!$room || $room['game_state'] !== 'town') {
-            $pdo->commit();
-            return false;
-        }
-        
-        $gd = $room['game_data'] ? json_decode($room['game_data'], true) : [];
-        $townDeadline = $gd['town_deadline'] ?? null;
-        
-        if (!$townDeadline || time() <= $townDeadline) {
-            $pdo->commit();
-            return false;
-        }
-        
-    // Set all unready players to ready
-    $stmt = $pdo->prepare("UPDATE players SET is_ready = 1 WHERE room_id = ? AND is_ready = 0");
-    $stmt->execute([$roomId]);
-    $affectedRows = $stmt->rowCount();
-    
-    if ($affectedRows === 0) {
-        $pdo->commit();
-        return false; // Everyone was already ready
-    }
-    
-    // Broadcast auto-ready event
-    broadcastEvent($roomId, 'town_deadline_enforced', [
-        'message' => 'Town timer expired — all players auto-readied!'
-    ]);
-    
-    // Check if all players are now ready (they should be)
-    $stmt = $pdo->prepare("
-        SELECT COUNT(*) as total, SUM(is_ready) as ready 
-        FROM players WHERE room_id = ?
-    ");
-    $stmt->execute([$roomId]);
-    $counts = $stmt->fetch();
-    
-    if ($counts['ready'] == $counts['total']) {
-        // All ready — transition to tournament phase
-        $stmt = $pdo->prepare("UPDATE players SET is_ready = 0 WHERE room_id = ?");
-        $stmt->execute([$roomId]);
-        
-        $stmt = $pdo->prepare("UPDATE rooms SET game_state = 'tournament', game_data = NULL WHERE id = ?");
-        $stmt->execute([$roomId]);
-        
-        broadcastEvent($roomId, 'phase_changed', [
-            'new_phase' => 'tournament',
-            'message' => 'Town timer expired! Starting Tournament Phase...'
-        ]);
-    }
-    
-        $pdo->commit();
-    } catch (Exception $e) {
-        $pdo->rollBack();
-        throw $e;
-    }
-    
-    return true;
 }
 
 /**

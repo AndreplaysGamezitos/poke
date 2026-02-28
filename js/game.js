@@ -14,34 +14,17 @@ const GameState = {
     selectedAvatar: 1,
     players: [],
     gameState: 'lobby',
-    gameMode: 'casual', // 'casual' or 'ranked'
     eventSource: null,  // SSE fallback
     webSocket: null,    // WebSocket connection
     wsReconnectAttempts: 0,
     lastEventId: 0,
-    // Account state
-    account: null, // { id, nickname, code, avatar_id, elo, games_played, games_won }
-    // Ranked queue
-    rankedQueueInterval: null,
     // Catching phase state
     catchingState: null,
     wildPokemon: null,
     isMyTurn: false,
     currentRoute: 1,
-    turnsPerPlayer: 8,
-    myTurnsTaken: 0,
-    catchAnimationInProgress: false,
-    // Countdown timers
-    catchingTimerInterval: null,
-    catchingTimerSeconds: 0,
-    townTimerInterval: null,
-    townTimerSeconds: 0,
-    // Polling/watchdog intervals
-    selectionPollInterval: null,
-    gameStateWatchdogInterval: null,
-    // Initial selection timer (deadline-based for tab-throttle resilience)
-    initialSelectionTimerInterval: null,
-    initialSelectionDeadline: null
+    encountersRemaining: 0,
+    catchAnimationInProgress: false
 };
 
 // Avatar options (using emojis for simplicity, can be replaced with images)
@@ -68,16 +51,7 @@ const BattleState = {
     isNpcBattle: false,
     npcData: null,
     // Type matchup indicators for selection UI
-    typeMatchups: null,
-    // Ranked mode fields
-    isRankedMode: false,
-    myMatchIndex: null,
-    bracketSummary: [],
-    rankedWaiting: false,
-    // Selection timer fields (deadline-based for tab-throttle resilience)
-    selectionTimerInterval: null,
-    selectionDeadline: null, // absolute deadline in ms (Date.now()-based)
-    selectionIsReplacement: false
+    typeMatchups: null
 };
 
 // API Endpoints
@@ -88,9 +62,7 @@ const API = {
     pokemon: 'api/pokemon.php',
     catching: 'api/catching.php',
     town: 'api/town.php',
-    tournament: 'api/tournament.php',
-    account: 'api/account.php',
-    ranked: 'api/ranked.php'
+    tournament: 'api/tournament.php'
 };
 
 // WebSocket Configuration
@@ -98,8 +70,8 @@ const WS_CONFIG = {
     // Change this URL to your Node.js WebSocket server URL in production
     // For local development: 'ws://localhost:3000'
     // For production: 'wss://your-domain.com:3000' or via reverse proxy
-    url: 'wss://poke.labzts.fun/ws',
-    enabled: true,       // ← CHANGE from false to true
+    url: 'ws://localhost:3000',
+    enabled: false,  // Disabled - using SSE mode (works on shared hosting)
     reconnectDelay: 3000,
     maxReconnectAttempts: 10
 };
@@ -110,19 +82,13 @@ let DOM = {};
 /**
  * Initialize the game
  */
-async function init() {
+function init() {
     cacheDOM();
     setupEventListeners();
     setupAvatarSelectors();
     
-    // Check for saved account and restore backend session
-    const hasAccount = await loadSavedAccount();
-    
-    // Only check existing PHP session if no account was restored
-    // (restoreBackendSession already handles reconnection for logged-in users)
-    if (!hasAccount) {
-        checkExistingSession();
-    }
+    // Check for existing session
+    checkExistingSession();
 }
 
 /**
@@ -141,47 +107,20 @@ function cacheDOM() {
             battle: document.getElementById('screen-battle'),
             victory: document.getElementById('screen-victory')
         },
-        // Account
-        accountSection: document.getElementById('account-section'),
-        loggedInSection: document.getElementById('logged-in-section'),
-        accountCreateView: document.getElementById('account-create-view'),
-        accountLoginView: document.getElementById('account-login-view'),
-        accountNicknameCreate: document.getElementById('account-nickname-create'),
-        accountNicknameLogin: document.getElementById('account-nickname-login'),
-        accountCode: document.getElementById('account-code'),
-        btnAccountLogin: document.getElementById('btn-account-login'),
-        btnAccountCreate: document.getElementById('btn-account-create'),
-        btnShowLogin: document.getElementById('btn-show-login'),
-        btnShowCreate: document.getElementById('btn-show-create'),
-        btnAccountLogout: document.getElementById('btn-account-logout'),
-        menuAccountName: document.getElementById('menu-account-name'),
-        menuAccountElo: document.getElementById('menu-account-elo'),
-        menuAccountAvatar: document.getElementById('menu-account-avatar'),
-        codeDisplay: document.getElementById('code-display'),
-        btnToggleCode: document.getElementById('btn-toggle-code'),
-        accountAvatarSelector: document.getElementById('account-avatar-selector'),
-        // Ranked
-        btnRankedQueue: document.getElementById('btn-ranked-queue'),
-        rankedQueuePanel: document.getElementById('ranked-queue-panel'),
-        rankedQueueStatus: document.getElementById('ranked-queue-status'),
-        rankedQueueCount: document.getElementById('ranked-queue-count'),
-        btnLeaveQueue: document.getElementById('btn-leave-queue'),
-        // Leaderboard
-        btnLeaderboard: document.getElementById('btn-leaderboard'),
-        leaderboardPanel: document.getElementById('leaderboard-panel'),
-        leaderboardList: document.getElementById('leaderboard-list'),
-        btnCloseLeaderboard: document.getElementById('btn-close-leaderboard'),
         // Menu
         btnCreateRoom: document.getElementById('btn-create-room'),
         btnJoinRoom: document.getElementById('btn-join-room'),
         createRoomForm: document.getElementById('create-room-form'),
         joinRoomForm: document.getElementById('join-room-form'),
-        createRoomPreviewName: document.getElementById('create-room-preview-name'),
+        createPlayerName: document.getElementById('create-player-name'),
+        joinPlayerName: document.getElementById('join-player-name'),
         roomCodeInput: document.getElementById('room-code-input'),
         btnConfirmCreate: document.getElementById('btn-confirm-create'),
         btnCancelCreate: document.getElementById('btn-cancel-create'),
         btnConfirmJoin: document.getElementById('btn-confirm-join'),
         btnCancelJoin: document.getElementById('btn-cancel-join'),
+        createAvatarSelector: document.getElementById('create-avatar-selector'),
+        joinAvatarSelector: document.getElementById('join-avatar-selector'),
         // Lobby
         displayRoomCode: document.getElementById('display-room-code'),
         btnCopyCode: document.getElementById('btn-copy-code'),
@@ -208,8 +147,6 @@ function cacheDOM() {
         wildPokemonSpd: document.getElementById('wild-pokemon-spd'),
         wildHpBar: document.getElementById('wild-hp-bar'),
         wildHpText: document.getElementById('wild-hp-text'),
-        wildCatchRate: document.getElementById('wild-catch-rate'),
-        wildCatchRateDisplay: document.getElementById('wild-catch-rate-display'),
         catchingTurnIndicator: document.getElementById('catching-turn-indicator'),
         currentTurnName: document.getElementById('current-turn-name'),
         btnCatch: document.getElementById('btn-catch'),
@@ -252,9 +189,6 @@ function cacheDOM() {
         battleSelectionPanel: document.getElementById('battle-selection-panel'),
         battleSelectionTitle: document.getElementById('battle-selection-title'),
         battleSelectionGrid: document.getElementById('battle-selection-grid'),
-        selectionTimer: document.getElementById('selection-timer'),
-        timerProgress: document.getElementById('timer-progress'),
-        timerText: document.getElementById('timer-text'),
         battleLogMessages: document.getElementById('battle-log-messages'),
         battleP1Pokemon: document.getElementById('battle-p1-pokemon'),
         battleP2Pokemon: document.getElementById('battle-p2-pokemon'),
@@ -270,27 +204,6 @@ function cacheDOM() {
  * Setup event listeners
  */
 function setupEventListeners() {
-    // Account buttons
-    DOM.btnAccountLogin?.addEventListener('click', loginAccount);
-    DOM.btnAccountCreate?.addEventListener('click', createAccount);
-    DOM.btnAccountLogout?.addEventListener('click', logoutAccount);
-    DOM.btnShowLogin?.addEventListener('click', showLoginView);
-    DOM.btnShowCreate?.addEventListener('click', showCreateView);
-    
-    // Code reveal toggle
-    DOM.btnToggleCode?.addEventListener('click', toggleCodeReveal);
-    DOM.codeDisplay?.addEventListener('click', toggleCodeReveal);
-    
-    // Ranked queue
-    DOM.btnRankedQueue?.addEventListener('click', joinRankedQueue);
-    DOM.btnLeaveQueue?.addEventListener('click', leaveRankedQueue);
-    
-    // Leaderboard
-    DOM.btnLeaderboard?.addEventListener('click', showLeaderboard);
-    DOM.btnCloseLeaderboard?.addEventListener('click', () => {
-        DOM.leaderboardPanel?.classList.add('hidden');
-    });
-    
     // Menu buttons
     DOM.btnCreateRoom.addEventListener('click', () => showForm('create'));
     DOM.btnJoinRoom.addEventListener('click', () => showForm('join'));
@@ -315,44 +228,31 @@ function setupEventListeners() {
     // Keyboard shortcuts for catching phase
     document.addEventListener('keydown', handleCatchingKeyboard);
     
-    // Visibility change: immediately recalculate timers
-    // when the tab regains focus (browsers throttle setInterval in bg tabs)
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            if (BattleState.selectionDeadline) {
-                tickSelectionTimer();
-            }
-            if (GameState.initialSelectionDeadline) {
-                tickInitialSelectionTimer();
-            }
-            if (GameState.catchingDeadline) {
-                tickCatchingTimer();
-            }
-            if (GameState.townDeadline) {
-                tickTownTimer();
-            }
-        }
-    });
-    
     // Enter key for forms
+    DOM.createPlayerName.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') createRoom();
+    });
+    DOM.joinPlayerName.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') joinRoom();
+    });
     DOM.roomCodeInput.addEventListener('keypress', (e) => {
         if (e.key === 'Enter') joinRoom();
     });
 }
 
 /**
- * Setup avatar selector options (account creation only)
+ * Setup avatar selector options
  */
 function setupAvatarSelectors() {
-    const selector = DOM.accountAvatarSelector;
-    if (!selector) return;
-    AVATARS.forEach((avatar, index) => {
-        const option = document.createElement('div');
-        option.className = 'avatar-option' + (index === 0 ? ' selected' : '');
-        option.textContent = avatar;
-        option.dataset.avatarId = index + 1;
-        option.addEventListener('click', () => selectAvatar(option, selector));
-        selector.appendChild(option);
+    [DOM.createAvatarSelector, DOM.joinAvatarSelector].forEach(selector => {
+        AVATARS.forEach((avatar, index) => {
+            const option = document.createElement('div');
+            option.className = 'avatar-option' + (index === 0 ? ' selected' : '');
+            option.textContent = avatar;
+            option.dataset.avatarId = index + 1;
+            option.addEventListener('click', () => selectAvatar(option, selector));
+            selector.appendChild(option);
+        });
     });
 }
 
@@ -374,11 +274,7 @@ function showForm(type) {
     
     if (type === 'create') {
         DOM.createRoomForm.classList.remove('hidden');
-        // Show account name preview
-        if (DOM.createRoomPreviewName && GameState.account) {
-            const avatarIndex = (GameState.account.avatar_id || 1) - 1;
-            DOM.createRoomPreviewName.textContent = `${AVATARS[avatarIndex] || AVATARS[0]} ${GameState.account.nickname}`;
-        }
+        DOM.createPlayerName.focus();
     } else {
         DOM.joinRoomForm.classList.remove('hidden');
         DOM.roomCodeInput.focus();
@@ -395,373 +291,6 @@ function hideForm(type) {
         DOM.joinRoomForm.classList.add('hidden');
     }
 }
-
-// ============================================
-// ACCOUNT MANAGEMENT FUNCTIONS
-// ============================================
-
-/**
- * Load saved account from localStorage
- */
-/**
- * Show the login view and hide the create account view
- */
-function showLoginView() {
-    DOM.accountCreateView?.classList.add('hidden');
-    DOM.accountLoginView?.classList.remove('hidden');
-}
-
-/**
- * Show the create account view and hide the login view
- */
-function showCreateView() {
-    DOM.accountLoginView?.classList.add('hidden');
-    DOM.accountCreateView?.classList.remove('hidden');
-}
-
-async function loadSavedAccount() {
-    const saved = localStorage.getItem('pokefodase_account');
-    if (saved) {
-        try {
-            GameState.account = JSON.parse(saved);
-            updateAccountUI();
-            // Restore backend session and check for active game
-            await restoreBackendSession();
-            return true;
-        } catch (e) {
-            localStorage.removeItem('pokefodase_account');
-        }
-    }
-    return false;
-}
-
-/**
- * Save account to localStorage
- */
-function saveAccount(account) {
-    GameState.account = account;
-    localStorage.setItem('pokefodase_account', JSON.stringify(account));
-    updateAccountUI();
-}
-
-/**
- * Restore backend PHP session from saved account data
- * Also checks for an active game and reconnects to it
- */
-async function restoreBackendSession() {
-    if (!GameState.account) return;
-    
-    try {
-        const result = await apiCall(`${API.account}?action=restore_session`, {
-            account_id: GameState.account.id,
-            code: GameState.account.code
-        });
-        
-        if (result.success) {
-            // Update local account data with fresh data from server
-            if (result.account) {
-                saveAccount(result.account);
-            }
-            
-            // If there's an active game, reconnect to it
-            if (result.active_game) {
-                console.log('Active game found, reconnecting:', result.active_game);
-                GameState.roomCode = result.active_game.room_code;
-                GameState.roomId = result.active_game.room_id;
-                GameState.playerId = result.active_game.player_id;
-                GameState.playerNumber = parseInt(result.active_game.player_number);
-                GameState.isHost = result.active_game.is_host;
-                GameState.gameMode = result.active_game.game_mode || 'casual';
-                
-                showToast('Reconectado à partida!', 'success');
-                enterLobby();
-                handleGameStateChange(result.active_game.game_state);
-            }
-        } else {
-            // Session restore failed — account may be invalid, clear it
-            console.warn('Session restore failed:', result.error);
-            GameState.account = null;
-            localStorage.removeItem('pokefodase_account');
-            updateAccountUI();
-        }
-    } catch (error) {
-        console.error('Error restoring session:', error);
-        // Don't clear account on network error, might be temporary
-    }
-}
-
-/**
- * Update account UI elements
- */
-function updateAccountUI() {
-    if (GameState.account) {
-        DOM.accountSection?.classList.add('hidden');
-        DOM.loggedInSection?.classList.remove('hidden');
-        if (DOM.menuAccountName) DOM.menuAccountName.textContent = GameState.account.nickname;
-        if (DOM.menuAccountElo) DOM.menuAccountElo.textContent = `ELO: ${GameState.account.elo}`;
-        if (DOM.menuAccountAvatar) {
-            const avatarIndex = (GameState.account.avatar_id || 1) - 1;
-            DOM.menuAccountAvatar.textContent = AVATARS[avatarIndex] || AVATARS[0];
-        }
-        // Reset code display to hidden state
-        if (DOM.codeDisplay) {
-            DOM.codeDisplay.textContent = '••••••••';
-            DOM.codeDisplay.dataset.revealed = 'false';
-        }
-    } else {
-        DOM.accountSection?.classList.remove('hidden');
-        DOM.loggedInSection?.classList.add('hidden');
-    }
-}
-
-/**
- * Toggle the visibility of the player's account code
- */
-function toggleCodeReveal() {
-    if (!DOM.codeDisplay || !GameState.account) return;
-    const isRevealed = DOM.codeDisplay.dataset.revealed === 'true';
-    if (isRevealed) {
-        DOM.codeDisplay.textContent = '••••••••';
-        DOM.codeDisplay.dataset.revealed = 'false';
-        DOM.codeDisplay.classList.remove('revealed');
-    } else {
-        DOM.codeDisplay.textContent = GameState.account.code;
-        DOM.codeDisplay.dataset.revealed = 'true';
-        DOM.codeDisplay.classList.add('revealed');
-        // Copy to clipboard
-        navigator.clipboard.writeText(GameState.account.code).then(() => {
-            showToast('Código copiado!', 'success', 2000);
-        }).catch(() => {});
-    }
-}
-
-/**
- * Create a new account
- */
-async function createAccount() {
-    const nickname = DOM.accountNicknameCreate?.value?.trim();
-    if (!nickname || nickname.length < 2) {
-        showToast('Nickname deve ter pelo menos 2 caracteres', 'warning');
-        return;
-    }
-    
-    setLoading(true);
-    try {
-        const result = await apiCall(`${API.account}?action=create`, { 
-            nickname,
-            avatar_id: GameState.selectedAvatar 
-        });
-        if (result.success) {
-            saveAccount(result.account);
-            showToast(`Conta criada! Seu código: ${result.account.code}. Salve!`, 'success', 8000);
-        } else {
-            showToast(result.error || 'Erro ao criar conta', 'error');
-        }
-    } catch (error) {
-        console.error('Error creating account:', error);
-        showToast('Erro ao criar conta', 'error');
-    } finally {
-        setLoading(false);
-    }
-}
-
-/**
- * Login to an existing account
- */
-async function loginAccount() {
-    const nickname = DOM.accountNicknameLogin?.value?.trim();
-    const code = DOM.accountCode?.value?.trim();
-    
-    if (!nickname) {
-        showToast('Digite seu nickname', 'warning');
-        return;
-    }
-    if (!code || code.length !== 8) {
-        showToast('Código deve ter 8 dígitos', 'warning');
-        return;
-    }
-    
-    setLoading(true);
-    try {
-        const result = await apiCall(`${API.account}?action=login`, { nickname, code });
-        if (result.success) {
-            saveAccount(result.account);
-            showToast(`Bem-vindo, ${result.account.nickname}!`, 'success');
-        } else {
-            showToast(result.error || 'Login falhou', 'error');
-        }
-    } catch (error) {
-        console.error('Error logging in:', error);
-        showToast('Erro ao fazer login', 'error');
-    } finally {
-        setLoading(false);
-    }
-}
-
-/**
- * Logout
- */
-function logoutAccount() {
-    GameState.account = null;
-    localStorage.removeItem('pokefodase_account');
-    updateAccountUI();
-    showToast('Desconectado', 'info');
-}
-
-// ============================================
-// RANKED QUEUE FUNCTIONS
-// ============================================
-
-/**
- * Join the ranked matchmaking queue
- */
-async function joinRankedQueue() {
-    if (!GameState.account) {
-        showToast('Faça login primeiro!', 'warning');
-        return;
-    }
-    
-    setLoading(true);
-    try {
-        const result = await apiCall(`${API.ranked}?action=join_queue`, {});
-        if (result.success) {
-            if (result.status === 'matched') {
-                // Match found! Enter the game
-                showToast('Partida encontrada!', 'success');
-                GameState.roomCode = result.room_code;
-                GameState.roomId = result.room_id;
-                GameState.playerId = result.player_id;
-                GameState.playerNumber = parseInt(result.player_number);
-                GameState.gameMode = 'ranked';
-                DOM.rankedQueuePanel?.classList.add('hidden');
-                setLoading(false);
-                enterLobby();
-                return;
-            }
-            // Show queue panel
-            DOM.rankedQueuePanel?.classList.remove('hidden');
-            if (DOM.rankedQueueStatus) DOM.rankedQueueStatus.textContent = result.message;
-            if (DOM.rankedQueueCount) {
-                const total = result.total_needed || 4;
-                DOM.rankedQueueCount.textContent = `${total - result.players_needed}/${total} jogadores`;
-            }
-            
-            // Start polling for queue status
-            startQueuePolling();
-        } else {
-            // Check if the error includes active game info for reconnection
-            if (result.active_game) {
-                showToast('Reconectando à partida ativa...', 'info');
-                GameState.roomCode = result.active_game.room_code;
-                GameState.roomId = result.active_game.room_id;
-                GameState.playerId = result.active_game.player_id;
-                GameState.playerNumber = parseInt(result.active_game.player_number);
-                GameState.isHost = result.active_game.is_host;
-                GameState.gameMode = result.active_game.game_mode || 'ranked';
-                setLoading(false);
-                enterLobby();
-                handleGameStateChange(result.active_game.game_state);
-                return;
-            }
-            showToast(result.error || 'Erro ao entrar na fila', 'error');
-        }
-    } catch (error) {
-        console.error('Error joining ranked queue:', error);
-        showToast('Erro ao entrar na fila ranqueada', 'error');
-    } finally {
-        setLoading(false);
-    }
-}
-
-/**
- * Leave the ranked queue
- */
-async function leaveRankedQueue() {
-    stopQueuePolling();
-    DOM.rankedQueuePanel?.classList.add('hidden');
-    
-    try {
-        await apiCall(`${API.ranked}?action=leave_queue`, {});
-        showToast('Saiu da fila', 'info');
-    } catch (error) {
-        console.error('Error leaving queue:', error);
-    }
-}
-
-/**
- * Start polling for queue status updates
- */
-function startQueuePolling() {
-    stopQueuePolling();
-    GameState.rankedQueueInterval = setInterval(async () => {
-        try {
-            const result = await apiCall(`${API.ranked}?action=check_queue`, {}, 'GET');
-            if (result.success) {
-                if (result.status === 'matched') {
-                    stopQueuePolling();
-                    showToast('Partida encontrada!', 'success');
-                    GameState.roomCode = result.room_code;
-                    GameState.roomId = result.room_id;
-                    GameState.playerId = result.player_id;
-                    GameState.playerNumber = parseInt(result.player_number);
-                    GameState.gameMode = 'ranked';
-                    DOM.rankedQueuePanel?.classList.add('hidden');
-                    enterLobby();
-                } else if (result.status === 'not_in_queue') {
-                    stopQueuePolling();
-                    DOM.rankedQueuePanel?.classList.add('hidden');
-                } else {
-                    if (DOM.rankedQueueCount) {
-                        const total = result.total_needed || 4;
-                        DOM.rankedQueueCount.textContent = `${total - (result.players_needed || 0)}/${total} jogadores`;
-                    }
-                }
-            }
-        } catch (error) {
-            console.error('Queue poll error:', error);
-        }
-    }, 3000);
-}
-
-/**
- * Stop queue polling
- */
-function stopQueuePolling() {
-    if (GameState.rankedQueueInterval) {
-        clearInterval(GameState.rankedQueueInterval);
-        GameState.rankedQueueInterval = null;
-    }
-}
-
-/**
- * Show leaderboard
- */
-async function showLeaderboard() {
-    DOM.leaderboardPanel?.classList.remove('hidden');
-    DOM.leaderboardList.innerHTML = '<p>Carregando...</p>';
-    
-    try {
-        const result = await apiCall(`${API.account}?action=leaderboard`, {}, 'GET');
-        if (result.success && result.leaderboard) {
-            DOM.leaderboardList.innerHTML = result.leaderboard.map((entry, i) => `
-                <div class="leaderboard-row ${entry.id == GameState.account?.id ? 'is-self' : ''}">
-                    <span class="lb-rank">#${i + 1}</span>
-                    <span class="lb-name">${escapeHtml(entry.nickname)}</span>
-                    <span class="lb-elo">ELO: ${entry.elo}</span>
-                    <span class="lb-games">${entry.games_played} jogos</span>
-                </div>
-            `).join('');
-        } else {
-            DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';
-        }
-    } catch (error) {
-        DOM.leaderboardList.innerHTML = '<p>Erro ao carregar leaderboard</p>';
-    }
-}
-
-// ============================================
-// END ACCOUNT/RANKED FUNCTIONS
-// ============================================
 
 /**
  * Show/hide loading overlay
@@ -835,10 +364,6 @@ async function leaveGame() {
     
     // Disconnect real-time connection
     disconnectRealtime();
-    stopSelectionPolling();
-    stopGameStateWatchdog();
-    stopCatchingTimer();
-    stopTownTimer();
     
     // Reset all game state
     GameState.roomCode = null;
@@ -852,8 +377,7 @@ async function leaveGame() {
     GameState.wildPokemon = null;
     GameState.isMyTurn = false;
     GameState.currentRoute = 1;
-    GameState.turnsPerPlayer = 8;
-    GameState.myTurnsTaken = 0;
+    GameState.encountersRemaining = 0;
     GameState.lastEventId = 0;
     
     setLoading(false);
@@ -870,10 +394,6 @@ function returnToMenu() {
     
     // Disconnect real-time connection
     disconnectRealtime();
-    stopSelectionPolling();
-    stopGameStateWatchdog();
-    stopCatchingTimer();
-    stopTownTimer();
     
     // Reset GameState
     GameState.roomCode = null;
@@ -887,8 +407,7 @@ function returnToMenu() {
     GameState.wildPokemon = null;
     GameState.isMyTurn = false;
     GameState.currentRoute = 1;
-    GameState.turnsPerPlayer = 8;
-    GameState.myTurnsTaken = 0;
+    GameState.encountersRemaining = 0;
     GameState.lastEventId = 0;
     GameState.starters = null;
     GameState.selectionState = null;
@@ -911,7 +430,6 @@ function returnToMenu() {
         clearTimeout(BattleState.autoTurnTimer);
         BattleState.autoTurnTimer = null;
     }
-    stopSelectionTimer();
     BattleState.battleLog = [];
     
     // Reset TownState (if it exists)
@@ -941,21 +459,7 @@ function returnToMenu() {
         TournamentState.isTiebreaker = false;
         TournamentState.tiebreakerType = '';
         TournamentState.tiebreakerRound = 1;
-        // Ranked mode fields
-        TournamentState.gameMode = 'casual';
-        TournamentState.allBattlesStarted = false;
-        TournamentState.myMatchIndex = null;
-        stopRankedCountdown();
     }
-    
-    // Reset ranked BattleState fields
-    BattleState.isRankedMode = false;
-    BattleState.myMatchIndex = null;
-    BattleState.bracketSummary = [];
-    BattleState.rankedWaiting = false;
-    stopRankedBracketPolling();
-    hideRankedWaitingOverlay();
-    hideRankedBracketPanel();
     
     // Hide the floating leave button
     if (DOM.btnLeaveGame) {
@@ -1023,22 +527,21 @@ async function apiCall(endpoint, data = {}, method = 'POST', timeoutMs = 15000) 
  * Create a new room
  */
 async function createRoom() {
-    const playerName = GameState.account?.nickname || 'Player 1';
-    const avatarId = GameState.account?.avatar_id || 1;
+    const playerName = DOM.createPlayerName.value.trim() || 'Player 1';
     
     setLoading(true);
     try {
         const result = await apiCall(API.room, {
             action: 'create',
             player_name: playerName,
-            avatar_id: avatarId
+            avatar_id: GameState.selectedAvatar
         });
         
         if (result.success) {
             GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = parseInt(result.player_number);
+            GameState.playerNumber = result.player_number;
             GameState.isHost = result.is_host;
             
             showToast('Sala criada com sucesso!', 'success');
@@ -1057,8 +560,7 @@ async function createRoom() {
  */
 async function joinRoom() {
     const roomCode = DOM.roomCodeInput.value.trim().toUpperCase();
-    const playerName = GameState.account?.nickname || 'Player';
-    const avatarId = GameState.account?.avatar_id || 1;
+    const playerName = DOM.joinPlayerName.value.trim() || 'Player';
     
     if (!roomCode || roomCode.length !== 6) {
         showToast('Digite um código de sala válido com 6 caracteres', 'warning');
@@ -1072,7 +574,7 @@ async function joinRoom() {
             action: 'join',
             room_code: roomCode,
             player_name: playerName,
-            avatar_id: avatarId
+            avatar_id: GameState.selectedAvatar
         });
         
         console.log('Join result:', result);
@@ -1081,7 +583,7 @@ async function joinRoom() {
             GameState.roomCode = result.room_code;
             GameState.roomId = result.room_id;
             GameState.playerId = result.player_id;
-            GameState.playerNumber = parseInt(result.player_number);
+            GameState.playerNumber = result.player_number;
             GameState.isHost = result.is_host;
             
             showToast(result.rejoined ? 'Reconectou à sala!' : 'Entrou na sala!', 'success');
@@ -1113,9 +615,6 @@ function enterLobby() {
     
     // Start real-time connection (WebSocket with SSE fallback)
     connectRealtime();
-    
-    // Start game state watchdog (safety net for missed real-time events)
-    startGameStateWatchdog();
     
     // Initial room state fetch
     refreshRoomState();
@@ -1306,9 +805,10 @@ function connectSSE() {
         const playerName = GameState.players.find(p => p.id == data.data.player_id)?.player_name || 'Um jogador';
         showToast(`${playerName} escolheu ${data.data.pokemon_name}!`, 'info');
         
-        // Always refresh selection state - handles race conditions where
-        // the event arrives before screen transition completes
-        refreshSelectionState();
+        // Refresh selection state if we're on the initial screen
+        if (GameState.currentScreen === 'initial') {
+            refreshSelectionState();
+        }
     });
     
     GameState.eventSource.addEventListener('phase_changed', (e) => {
@@ -1434,17 +934,23 @@ function connectSSE() {
     // Town Phase Events
     GameState.eventSource.addEventListener('town_purchase', (e) => {
         const data = JSON.parse(e.data);
-        handleTownEvent('town_purchase', data.data);
+        if (GameState.currentScreen === 'town') {
+            handleTownEvent('town_purchase', data.data);
+        }
     });
     
     GameState.eventSource.addEventListener('town_sell', (e) => {
         const data = JSON.parse(e.data);
-        handleTownEvent('town_sell', data.data);
+        if (GameState.currentScreen === 'town') {
+            handleTownEvent('town_sell', data.data);
+        }
     });
     
     GameState.eventSource.addEventListener('town_ready_toggle', (e) => {
         const data = JSON.parse(e.data);
-        handleTownEvent('town_ready_toggle', data.data);
+        if (GameState.currentScreen === 'town') {
+            handleTownEvent('town_ready_toggle', data.data);
+        }
     });
     
     GameState.eventSource.addEventListener('town_phase_change', (e) => {
@@ -1454,7 +960,9 @@ function connectSSE() {
     
     GameState.eventSource.addEventListener('town_switch_active', (e) => {
         const data = JSON.parse(e.data);
-        handleTownEvent('town_switch_active', data.data);
+        if (GameState.currentScreen === 'town') {
+            handleTownEvent('town_switch_active', data.data);
+        }
     });
     
     // Tournament Phase Events
@@ -1472,7 +980,9 @@ function connectSSE() {
     
     GameState.eventSource.addEventListener('tournament_updated', (e) => {
         const data = JSON.parse(e.data);
-        handleTournamentEvent('tournament_updated', data.data);
+        if (GameState.currentScreen === 'tournament') {
+            handleTournamentEvent('tournament_updated', data.data);
+        }
     });
     
     GameState.eventSource.addEventListener('game_finished', (e) => {
@@ -1487,8 +997,7 @@ function connectSSE() {
         const playerNames = players.map(p => p.name).join(', ');
         
         if (reason === 'badges_draw') {
-            const badgeCount = players[0]?.badges || (GameState.gameMode === 'ranked' ? 4 : 5);
-            showToast(`🔥 DESEMPATE! ${playerNames} empataram com ${badgeCount} insígnias! Eles devem batalhar!`, 'warning');
+            showToast(`🔥 DESEMPATE! ${playerNames} empataram com 5 insígnias! Eles devem batalhar!`, 'warning');
         } else if (reason === 'final_draw') {
             showToast(`🔥 DESEMPATE FINAL! ${playerNames} empataram com mais insígnias!`, 'warning');
         }
@@ -1501,47 +1010,6 @@ function connectSSE() {
         const data = JSON.parse(e.data);
         showToast(`⚔️ Rodada de Desempate ${data.data.round}! ${data.data.remaining_players} jogadores restantes!`, 'info');
         refreshTournamentState();
-    });
-
-    // Ranked Mode Events
-    GameState.eventSource.addEventListener('all_battles_started', (e) => {
-        const data = JSON.parse(e.data);
-        handleTournamentEvent('all_battles_started', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_all_battles_complete', (e) => {
-        const data = JSON.parse(e.data);
-        handleTournamentEvent('ranked_all_battles_complete', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_battle_attack', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('attack', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_battle_ended', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('battle_ended', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_pokemon_selected', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('pokemon_selected', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_combat_started', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('combat_started', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_pokemon_fainted', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('pokemon_fainted', data.data);
-    });
-    
-    GameState.eventSource.addEventListener('ranked_pokemon_sent', (e) => {
-        const data = JSON.parse(e.data);
-        handleRankedBattleEvent('pokemon_sent', data.data);
     });
 
     // Battle Phase Events
@@ -1718,8 +1186,9 @@ function handleWebSocketMessage(message) {
         case 'starter_selected':
             const playerName = GameState.players.find(p => p.id == eventData.player_id)?.player_name || 'Um jogador';
             showToast(`${playerName} escolheu ${eventData.pokemon_name}!`, 'info');
-            // Always refresh - handles race conditions where event arrives before screen transition
-            refreshSelectionState();
+            if (GameState.currentScreen === 'initial') {
+                refreshSelectionState();
+            }
             break;
             
         case 'phase_changed':
@@ -1785,9 +1254,9 @@ function handleWebSocketMessage(message) {
         case 'town_sell':
         case 'town_ready_toggle':
         case 'town_switch_active':
-            // Always handle town events - don't gate on currentScreen
-            // because the screen might not have transitioned yet
-            handleTownEvent(eventType, eventData);
+            if (GameState.currentScreen === 'town') {
+                handleTownEvent(eventType, eventData);
+            }
             break;
             
         case 'town_phase_change':
@@ -1805,8 +1274,9 @@ function handleWebSocketMessage(message) {
             break;
             
         case 'tournament_updated':
-            // Always handle tournament updates regardless of current screen
-            handleTournamentEvent('tournament_updated', eventData);
+            if (GameState.currentScreen === 'tournament') {
+                handleTournamentEvent('tournament_updated', eventData);
+            }
             break;
             
         case 'game_finished':
@@ -1853,39 +1323,6 @@ function handleWebSocketMessage(message) {
             
         case 'battle_ended':
             handleBattleEvent('battle_ended', eventData);
-            break;
-        
-        // Ranked Mode Events
-        case 'all_battles_started':
-            handleTournamentEvent('all_battles_started', eventData);
-            break;
-        
-        case 'ranked_all_battles_complete':
-            handleTournamentEvent('ranked_all_battles_complete', eventData);
-            break;
-        
-        case 'ranked_battle_attack':
-            handleRankedBattleEvent('attack', eventData);
-            break;
-        
-        case 'ranked_battle_ended':
-            handleRankedBattleEvent('battle_ended', eventData);
-            break;
-        
-        case 'ranked_pokemon_selected':
-            handleRankedBattleEvent('pokemon_selected', eventData);
-            break;
-        
-        case 'ranked_combat_started':
-            handleRankedBattleEvent('combat_started', eventData);
-            break;
-        
-        case 'ranked_pokemon_fainted':
-            handleRankedBattleEvent('pokemon_fainted', eventData);
-            break;
-        
-        case 'ranked_pokemon_sent':
-            handleRankedBattleEvent('pokemon_sent', eventData);
             break;
             
         case 'pong':
@@ -1971,77 +1408,37 @@ function disconnectRealtime() {
  * Handle game state changes
  */
 function handleGameStateChange(newState) {
-    // Map game states to expected screens
-    const stateToScreen = {
-        'lobby': 'lobby',
-        'initial': 'initial',
-        'catching': 'catching',
-        'town': 'town',
-        'tournament': 'tournament',
-        'battle': 'battle',
-        'finished': 'victory'
-    };
-    
-    const expectedScreen = stateToScreen[newState];
-    const alreadyOnCorrectScreen = expectedScreen && GameState.currentScreen === expectedScreen;
-    
-    // Skip if we're already in this state AND on the correct screen
-    // (unless we're in lobby, where we always re-process to handle game_started)
-    if (newState === GameState.gameState && alreadyOnCorrectScreen && newState !== 'lobby') return;
-    
-    console.log(`[StateChange] ${GameState.gameState} → ${newState} (screen: ${GameState.currentScreen} → ${expectedScreen})`);
+    if (newState === GameState.gameState && GameState.currentScreen !== 'lobby') return;
     
     GameState.gameState = newState;
     
     switch (newState) {
         case 'lobby':
-            stopCatchingTimer();
-            stopTownTimer();
-            stopInitialSelectionTimer();
             if (GameState.currentScreen !== 'lobby') {
                 switchScreen('lobby');
             }
             break;
         case 'initial':
-            stopCatchingTimer();
-            stopTownTimer();
             switchScreen('initial');
             loadStarterPokemon();
-            startSelectionPolling();
             break;
         case 'catching':
-            stopSelectionPolling();
-            stopTownTimer();
-            stopInitialSelectionTimer();
             switchScreen('catching');
             initCatchingPhase();
             break;
         case 'town':
-            stopCatchingTimer();
-            stopInitialSelectionTimer();
             switchScreen('town');
             initTownPhase();
             break;
         case 'tournament':
-            stopCatchingTimer();
-            stopTownTimer();
-            stopInitialSelectionTimer();
             switchScreen('tournament');
             initTournamentPhase();
             break;
         case 'battle':
-            stopCatchingTimer();
-            stopTownTimer();
-            stopInitialSelectionTimer();
             switchScreen('battle');
             initBattlePhase();
             break;
         case 'finished':
-            stopSelectionPolling();
-            stopGameStateWatchdog();
-            stopCatchingTimer();
-            stopTownTimer();
-            stopInitialSelectionTimer();
             switchScreen('victory');
             loadVictoryScreen();
             break;
@@ -2094,8 +1491,8 @@ function renderStarterSelection() {
     const starters = GameState.starters || [];
     const state = GameState.selectionState || {};
     const players = state.players || [];
-    const currentTurn = parseInt(state.current_turn ?? 0);
-    const isMyTurn = GameState.playerNumber == currentTurn;
+    const currentTurn = state.current_turn ?? 0;
+    const isMyTurn = GameState.playerNumber === currentTurn;
     
     // Find which Pokemon have been selected
     const selectedPokemonIds = players
@@ -2107,17 +1504,9 @@ function renderStarterSelection() {
     if (isMyTurn) {
         DOM.initialTurnIndicator.textContent = '🎯 Sua vez! Escolha seu Pokémon inicial!';
         DOM.initialTurnIndicator.style.color = '#4ade80';
-        // Start the countdown timer only if it's not already running
-        if (!GameState.initialSelectionTimerInterval) {
-            const serverDeadline = state.selection_deadline || null;
-            startInitialSelectionTimer(serverDeadline);
-        }
-    } else {
-        if (currentPlayer) {
-            DOM.initialTurnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
-            DOM.initialTurnIndicator.style.color = '#fbbf24';
-        }
-        stopInitialSelectionTimer();
+    } else if (currentPlayer) {
+        DOM.initialTurnIndicator.textContent = `Aguardando ${currentPlayer.player_name} escolher...`;
+        DOM.initialTurnIndicator.style.color = '#fbbf24';
     }
     
     // Render starter grid
@@ -2216,8 +1605,6 @@ function renderSelectedList(players) {
  * Select a starter Pokemon
  */
 async function selectStarter(pokemonId) {
-    // Stop the countdown immediately so we don't auto-select after clicking
-    stopInitialSelectionTimer();
     setLoading(true);
     
     try {
@@ -2231,12 +1618,7 @@ async function selectStarter(pokemonId) {
             
             if (result.phase_complete) {
                 showToast('Todos os jogadores escolheram! Iniciando fase de captura...', 'info');
-                // Transition directly — don't rely solely on WS/SSE event
-                // The WS/SSE event may also arrive, but handleGameStateChange
-                // will ignore it if we're already on the catching screen
-                setTimeout(() => {
-                    handleGameStateChange('catching');
-                }, 1500);
+                // Phase transition will happen via SSE
             } else {
                 // Refresh selection state
                 await refreshSelectionState();
@@ -2260,363 +1642,11 @@ async function refreshSelectionState() {
         const result = await apiCall(`${API.pokemon}?action=get_selection_state&room_code=${GameState.roomCode}`, {}, 'GET');
         
         if (result.success) {
-            // Check if game state has changed (e.g., initial → catching)
-            // This handles the case where a WS/SSE phase_changed event was missed
-            if (result.game_state && result.game_state !== 'initial') {
-                console.log(`Selection polling detected phase change to: ${result.game_state}`);
-                handleGameStateChange(result.game_state);
-                return;
-            }
-            
             GameState.selectionState = result;
-            // Only render if starters have been loaded
-            if (GameState.starters) {
-                renderStarterSelection();
-            }
+            renderStarterSelection();
         }
     } catch (error) {
         console.error('Error refreshing selection state:', error);
-    }
-}
-
-/**
- * Start polling for selection state updates (fallback for missed WS events)
- */
-function startSelectionPolling() {
-    stopSelectionPolling();
-    GameState.selectionPollInterval = setInterval(() => {
-        if (GameState.currentScreen === 'initial') {
-            refreshSelectionState();
-        } else {
-            stopSelectionPolling();
-        }
-    }, 3000);
-}
-
-/**
- * Stop selection phase polling
- */
-function stopSelectionPolling() {
-    if (GameState.selectionPollInterval) {
-        clearInterval(GameState.selectionPollInterval);
-        GameState.selectionPollInterval = null;
-    }
-}
-
-/**
- * Start a general-purpose game state watchdog.
- * Periodically checks the server's current game_state and triggers
- * phase transitions if a WS/SSE event was missed.
- * This is a safety net — real-time events should handle most transitions.
- */
-function startGameStateWatchdog() {
-    stopGameStateWatchdog();
-    GameState.gameStateWatchdogInterval = setInterval(async () => {
-        // Only run if we're in an active game
-        if (!GameState.roomCode) {
-            stopGameStateWatchdog();
-            return;
-        }
-        
-        try {
-            const result = await apiCall(`${API.room}?action=get_room&room_code=${GameState.roomCode}`, {}, 'GET');
-            if (result.success && result.room) {
-                const serverState = result.room.game_state;
-                // If the server's game state differs from ours, transition
-                if (serverState && serverState !== GameState.gameState) {
-                    console.log(`[Watchdog] Detected state mismatch: local=${GameState.gameState}, server=${serverState}. Transitioning...`);
-                    GameState.players = result.players || GameState.players;
-                    handleGameStateChange(serverState);
-                }
-            }
-        } catch (error) {
-            // Silently ignore — this is a background safety check
-            console.debug('[Watchdog] Poll error:', error);
-        }
-    }, 5000); // Check every 5 seconds
-}
-
-/**
- * Stop the game state watchdog
- */
-function stopGameStateWatchdog() {
-    if (GameState.gameStateWatchdogInterval) {
-        clearInterval(GameState.gameStateWatchdogInterval);
-        GameState.gameStateWatchdogInterval = null;
-    }
-}
-
-// ============================================
-// COUNTDOWN TIMER FUNCTIONS
-// ============================================
-
-/**
- * Start the catching phase countdown timer (5 seconds per turn).
- * Uses an absolute deadline so the timer stays accurate after tab switches.
- * Only runs on the current player's client. Auto-catches if time runs out.
- * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
- */
-function startCatchingTimer(serverDeadline = null) {
-    stopCatchingTimer();
-    
-    // Only start the timer if it's our turn and there's a wild Pokemon
-    if (!GameState.isMyTurn || !GameState.wildPokemon) return;
-    
-    // Calculate absolute deadline in milliseconds
-    if (serverDeadline) {
-        GameState.catchingDeadline = serverDeadline * 1000; // server sends seconds
-    } else {
-        GameState.catchingDeadline = Date.now() + 5000; // 5 s fallback
-    }
-    
-    const timerEl = document.getElementById('catching-countdown');
-    const timerValueEl = document.getElementById('catching-timer-value');
-    if (!timerEl || !timerValueEl) return;
-    
-    // Immediately render first frame
-    tickCatchingTimer();
-    
-    // Tick every 250 ms for responsive display; deadline math keeps it accurate
-    GameState.catchingTimerInterval = setInterval(() => {
-        tickCatchingTimer();
-    }, 250);
-}
-
-/**
- * Single tick of the catching timer – computes remaining time from deadline.
- */
-function tickCatchingTimer() {
-    if (!GameState.catchingDeadline) return;
-    
-    const remaining = Math.max(0, GameState.catchingDeadline - Date.now());
-    const secondsLeft = Math.ceil(remaining / 1000);
-    
-    const timerEl = document.getElementById('catching-countdown');
-    const timerValueEl = document.getElementById('catching-timer-value');
-    if (timerEl && timerValueEl) {
-        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
-        timerValueEl.textContent = Math.max(0, secondsLeft);
-        
-        if (secondsLeft <= 2) {
-            timerEl.classList.remove('timer-warning');
-            timerEl.classList.add('timer-critical');
-        } else if (secondsLeft <= 3) {
-            timerEl.classList.remove('timer-critical');
-            timerEl.classList.add('timer-warning');
-        } else {
-            timerEl.classList.remove('timer-warning', 'timer-critical');
-        }
-    }
-    
-    if (remaining <= 0) {
-        stopCatchingTimer();
-        console.log('[Timer] Catching timer expired — auto-catching');
-        if (GameState.isMyTurn && GameState.wildPokemon && !GameState.catchAnimationInProgress) {
-            attemptCatch(false);
-        }
-    }
-}
-
-/**
- * Stop the catching phase countdown timer and hide the display.
- */
-function stopCatchingTimer() {
-    if (GameState.catchingTimerInterval) {
-        clearInterval(GameState.catchingTimerInterval);
-        GameState.catchingTimerInterval = null;
-    }
-    GameState.catchingTimerSeconds = 0;
-    GameState.catchingDeadline = null;
-    
-    const timerEl = document.getElementById('catching-countdown');
-    if (timerEl) {
-        timerEl.classList.add('hidden');
-        timerEl.classList.remove('timer-warning', 'timer-critical');
-    }
-}
-
-// ============================================
-// INITIAL SELECTION TIMER (deadline-based)
-// ============================================
-
-/**
- * Start a 10-second countdown for the initial Pokémon selection.
- * Uses an absolute deadline so the timer stays accurate even when the
- * browser throttles setInterval (e.g. when the tab is in the background).
- * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
- */
-function startInitialSelectionTimer(serverDeadline = null) {
-    stopInitialSelectionTimer();
-
-    // Calculate absolute deadline in milliseconds
-    if (serverDeadline) {
-        GameState.initialSelectionDeadline = serverDeadline * 1000; // server sends seconds
-    } else {
-        GameState.initialSelectionDeadline = Date.now() + 10000; // 10 s from now (fallback)
-    }
-
-    // Immediately render the first frame
-    tickInitialSelectionTimer();
-
-    // Tick every 250 ms for a responsive display
-    GameState.initialSelectionTimerInterval = setInterval(() => {
-        tickInitialSelectionTimer();
-    }, 250);
-}
-
-/**
- * Single tick of the initial-selection timer – computes remaining time from deadline.
- */
-function tickInitialSelectionTimer() {
-    if (!GameState.initialSelectionDeadline) return;
-
-    const remaining = Math.max(0, GameState.initialSelectionDeadline - Date.now());
-    const secondsLeft = Math.ceil(remaining / 1000);
-
-    // Update visual display
-    const timerEl = document.getElementById('initial-countdown');
-    const timerValueEl = document.getElementById('initial-timer-value');
-    if (timerEl && timerValueEl) {
-        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
-        timerValueEl.textContent = Math.max(0, secondsLeft);
-
-        if (secondsLeft <= 3) {
-            timerEl.classList.remove('timer-warning');
-            timerEl.classList.add('timer-critical');
-        } else if (secondsLeft <= 5) {
-            timerEl.classList.remove('timer-critical');
-            timerEl.classList.add('timer-warning');
-        } else {
-            timerEl.classList.remove('timer-warning', 'timer-critical');
-        }
-    }
-
-    if (remaining <= 0) {
-        stopInitialSelectionTimer();
-        autoSelectStarter();
-    }
-}
-
-/**
- * Stop the initial-selection countdown timer and hide the display.
- */
-function stopInitialSelectionTimer() {
-    if (GameState.initialSelectionTimerInterval) {
-        clearInterval(GameState.initialSelectionTimerInterval);
-        GameState.initialSelectionTimerInterval = null;
-    }
-    GameState.initialSelectionDeadline = null;
-
-    const timerEl = document.getElementById('initial-countdown');
-    if (timerEl) {
-        timerEl.classList.add('hidden');
-        timerEl.classList.remove('timer-warning', 'timer-critical');
-    }
-}
-
-/**
- * Auto-select a random available starter when the timer expires.
- */
-function autoSelectStarter() {
-    console.log('[Timer] Initial selection timer expired — auto-selecting starter');
-
-    const starters = GameState.starters || [];
-    const state = GameState.selectionState || {};
-    const players = state.players || [];
-
-    // Get already-chosen Pokémon IDs
-    const selectedPokemonIds = players
-        .filter(p => p.pokemon_id)
-        .map(p => parseInt(p.pokemon_id));
-
-    // Available starters = not yet selected
-    const available = starters.filter(s => !selectedPokemonIds.includes(s.id));
-    if (available.length === 0) return;
-
-    // Pick a random one
-    const pick = available[Math.floor(Math.random() * available.length)];
-    selectStarter(pick.id);
-}
-
-/**
- * Start the town phase countdown timer (60 seconds).
- * Uses an absolute deadline so the timer stays accurate after tab switches.
- * Runs on all clients. When it hits 0, auto-readies the player.
- * @param {number|null} serverDeadline - Unix timestamp (seconds) from server
- */
-function startTownTimer(serverDeadline = null) {
-    stopTownTimer();
-    
-    // Calculate absolute deadline in milliseconds
-    if (serverDeadline) {
-        GameState.townDeadline = serverDeadline * 1000; // server sends seconds
-    } else {
-        GameState.townDeadline = Date.now() + 60000; // 60 s fallback
-    }
-    
-    const timerEl = document.getElementById('town-countdown');
-    const timerValueEl = document.getElementById('town-timer-value');
-    if (!timerEl || !timerValueEl) return;
-    
-    // Immediately render first frame
-    tickTownTimer();
-    
-    // Tick every 250 ms for responsive display; deadline math keeps it accurate
-    GameState.townTimerInterval = setInterval(() => {
-        tickTownTimer();
-    }, 250);
-}
-
-/**
- * Single tick of the town timer – computes remaining time from deadline.
- */
-function tickTownTimer() {
-    if (!GameState.townDeadline) return;
-    
-    const remaining = Math.max(0, GameState.townDeadline - Date.now());
-    const secondsLeft = Math.ceil(remaining / 1000);
-    
-    const timerEl = document.getElementById('town-countdown');
-    const timerValueEl = document.getElementById('town-timer-value');
-    if (timerEl && timerValueEl) {
-        timerEl.classList.remove('hidden', 'timer-warning', 'timer-critical');
-        timerValueEl.textContent = Math.max(0, secondsLeft);
-        
-        if (secondsLeft <= 10) {
-            timerEl.classList.remove('timer-warning');
-            timerEl.classList.add('timer-critical');
-        } else if (secondsLeft <= 20) {
-            timerEl.classList.remove('timer-critical');
-            timerEl.classList.add('timer-warning');
-        } else {
-            timerEl.classList.remove('timer-warning', 'timer-critical');
-        }
-    }
-    
-    if (remaining <= 0) {
-        stopTownTimer();
-        console.log('[Timer] Town timer expired — auto-readying');
-        if (!TownState.isReady) {
-            toggleTownReady();
-        }
-    }
-}
-
-/**
- * Stop the town phase countdown timer and hide the display.
- */
-function stopTownTimer() {
-    if (GameState.townTimerInterval) {
-        clearInterval(GameState.townTimerInterval);
-        GameState.townTimerInterval = null;
-    }
-    GameState.townTimerSeconds = 0;
-    GameState.townDeadline = null;
-    
-    const timerEl = document.getElementById('town-countdown');
-    if (timerEl) {
-        timerEl.classList.add('hidden');
-        timerEl.classList.remove('timer-warning', 'timer-critical');
     }
 }
 
@@ -2649,24 +1679,13 @@ async function refreshCatchingState() {
         const result = await apiCall(`${API.catching}?action=get_state&room_code=${GameState.roomCode}`, {}, 'GET');
         
         if (result.success) {
-            // Check if game state has changed (e.g., catching → town)
-            // This handles the case where a WS/SSE phase_changed event was missed
-            if (result.room.game_state && result.room.game_state !== 'catching') {
-                console.log(`Catching state polling detected phase change to: ${result.room.game_state}`);
-                handleGameStateChange(result.room.game_state);
-                return;
-            }
-            
             GameState.catchingState = result;
             GameState.wildPokemon = result.wild_pokemon;
             GameState.currentRoute = result.room.current_route || 1;
-            GameState.turnsPerPlayer = result.room.turns_per_player || 8;
-            
-            // Track my turns taken
-            const myPlayer = result.players.find(p => p.id == GameState.playerId);
-            GameState.myTurnsTaken = myPlayer?.turns_taken || 0;
+            GameState.encountersRemaining = result.room.encounters_remaining || 0;
             
             // Check if it's my turn
+            const myPlayer = result.players.find(p => p.id == GameState.playerId);
             GameState.isMyTurn = myPlayer && myPlayer.player_number == result.room.current_player_turn;
             
             // Update all UI elements
@@ -2697,21 +1716,17 @@ function renderCatchingUI(data) {
         DOM.routeName.textContent = room.route_name || `Rota ${room.current_route}`;
     }
     if (DOM.encountersRemaining) {
-        // Show current cycle / total turns per player
-        const currentCycle = room.current_cycle || 1;
-        const turnsPerPlayer = room.turns_per_player || 8;
-        DOM.encountersRemaining.textContent = `Ciclo: ${currentCycle}/${turnsPerPlayer}`;
+        DOM.encountersRemaining.textContent = `Encontros: ${room.encounters_remaining}`;
     }
     if (DOM.routeProgress) {
-        const maxRoutes = (GameState.gameMode === 'ranked') ? 4 : 5;
-        DOM.routeProgress.textContent = `Rota ${room.current_route}/${maxRoutes}`;
+        DOM.routeProgress.textContent = `Rota ${room.current_route}/8`;
     }
     
     // Update wild Pokemon display
     renderWildPokemon(wildPokemon);
     
     // Update turn indicator
-    renderTurnIndicator(players, room.current_player_turn, room.turn_deadline);
+    renderTurnIndicator(players, room.current_player_turn);
     
     // Update action buttons
     updateActionButtons(wildPokemon);
@@ -2777,37 +1792,16 @@ function renderWildPokemon(pokemon) {
         if (DOM.wildHpText) {
             DOM.wildHpText.textContent = `${pokemon.current_hp}/${pokemon.max_hp}`;
         }
-        
-        // Display catch rate
-        if (DOM.wildCatchRate) {
-            const catchRate = pokemon.catch_rate || 30;
-            DOM.wildCatchRate.textContent = `${catchRate}%`;
-            // Color-code: green if high, yellow if medium, red if low
-            DOM.wildCatchRate.className = 'catch-rate-value';
-            if (catchRate >= 60) {
-                DOM.wildCatchRate.classList.add('catch-rate-high');
-            } else if (catchRate >= 35) {
-                DOM.wildCatchRate.classList.add('catch-rate-medium');
-            } else {
-                DOM.wildCatchRate.classList.add('catch-rate-low');
-            }
-        }
-        if (DOM.wildCatchRateDisplay) {
-            DOM.wildCatchRateDisplay.classList.remove('hidden');
-        }
     } else {
         DOM.wildPokemonDisplay.classList.add('hidden');
         DOM.wildPokemonPlaceholder?.classList.remove('hidden');
-        if (DOM.wildCatchRateDisplay) {
-            DOM.wildCatchRateDisplay.classList.add('hidden');
-        }
     }
 }
 
 /**
  * Render turn indicator
  */
-function renderTurnIndicator(players, currentTurn, turnDeadline = null) {
+function renderTurnIndicator(players, currentTurn) {
     const currentPlayer = players.find(p => p.player_number == currentTurn);
     
     if (DOM.currentTurnName && currentPlayer) {
@@ -2822,17 +1816,6 @@ function renderTurnIndicator(players, currentTurn, turnDeadline = null) {
         } else {
             DOM.catchingTurnIndicator.classList.remove('your-turn');
         }
-    }
-    
-    // Start/stop the catching countdown timer based on whose turn it is
-    if (GameState.isMyTurn && GameState.wildPokemon) {
-        // Only restart the timer if it's not already running
-        // (avoids resetting the timer on every state refresh within the same turn)
-        if (!GameState.catchingTimerInterval) {
-            startCatchingTimer(turnDeadline);
-        }
-    } else {
-        stopCatchingTimer();
     }
 }
 
@@ -2854,14 +1837,6 @@ function updateActionButtons(wildPokemon) {
     
     if (DOM.btnCatch) {
         DOM.btnCatch.disabled = !canAct;
-        // Update catch button text to show current catch rate
-        const btnText = DOM.btnCatch.querySelector('.btn-text');
-        if (btnText && wildPokemon) {
-            const catchRate = wildPokemon.catch_rate || 30;
-            btnText.textContent = `Capturar (${catchRate}%)`;
-        } else if (btnText) {
-            btnText.textContent = 'Capturar';
-        }
     }
     if (DOM.btnUltraCatch) {
         // Check if player has ultra balls
@@ -2927,16 +1902,11 @@ function renderPlayersPanel(players, currentTurn) {
             teamHtml = '<div class="no-pokemon">Nenhum Pokémon ainda</div>';
         }
         
-        const turnsTaken = player.turns_taken || 0;
-        const turnsPerPlayer = GameState.turnsPerPlayer || 8;
-        const turnsRemaining = Math.max(0, turnsPerPlayer - turnsTaken);
-        
         card.innerHTML = `
             <div class="catching-player-header">
                 <span class="player-avatar-mini">${avatarEmoji}</span>
                 <span class="player-name">${escapeHtml(player.player_name)}</span>
                 ${player.player_number == currentTurn ? '<span class="turn-badge">🎯</span>' : ''}
-                <span class="turns-badge" title="Turnos restantes">🔄 ${turnsRemaining}</span>
             </div>
             ${teamHtml}
             <div class="catching-player-stats">
@@ -3011,9 +1981,6 @@ async function attemptCatch(useUltraBall = false) {
         showToast("Não é sua vez!", 'warning');
         return;
     }
-    
-    // Stop the countdown timer — player has acted
-    stopCatchingTimer();
     
     setLoading(true);
     
@@ -3137,9 +2104,6 @@ async function attackWildPokemon() {
         return;
     }
     
-    // Stop the countdown timer — player has acted
-    stopCatchingTimer();
-    
     setLoading(true);
     
     try {
@@ -3238,10 +2202,7 @@ const TownState = {
     shopPrices: {
         ultra_ball: 3,
         evo_soda: 1,
-        mega_stone: 5,
-        hp_boost: 2,
-        attack_boost: 2,
-        speed_boost: 2
+        mega_stone: 5
     }
 };
 
@@ -3259,9 +2220,6 @@ async function initTownPhase() {
     
     // Setup town event listeners
     setupTownListeners();
-    
-    // Start the town countdown timer, synced to server deadline
-    startTownTimer(GameState.townServerDeadline || null);
 }
 
 /**
@@ -3272,17 +2230,11 @@ function setupTownListeners() {
     const btnBuyUltra = document.getElementById('btn-buy-ultra');
     const btnBuyEvoSoda = document.getElementById('btn-buy-evo-soda');
     const btnBuyMegaStone = document.getElementById('btn-buy-mega-stone');
-    const btnBuyHpBoost = document.getElementById('btn-buy-hp-boost');
-    const btnBuyAttackBoost = document.getElementById('btn-buy-attack-boost');
-    const btnBuySpeedBoost = document.getElementById('btn-buy-speed-boost');
     const btnTownReady = document.getElementById('btn-town-ready');
     
     btnBuyUltra?.addEventListener('click', buyUltraBall);
     btnBuyEvoSoda?.addEventListener('click', buyEvoSoda);
     btnBuyMegaStone?.addEventListener('click', buyMegaStone);
-    btnBuyHpBoost?.addEventListener('click', () => buyStatBoost('hp'));
-    btnBuyAttackBoost?.addEventListener('click', () => buyStatBoost('attack'));
-    btnBuySpeedBoost?.addEventListener('click', () => buyStatBoost('speed'));
     btnTownReady?.addEventListener('click', toggleTownReady);
 }
 
@@ -3302,13 +2254,6 @@ async function refreshTownState() {
             return;
         }
         
-        // Check if game state has changed (e.g., town → tournament)
-        if (result.room.game_state && result.room.game_state !== 'town') {
-            console.log(`Town state polling detected phase change to: ${result.room.game_state}`);
-            handleGameStateChange(result.room.game_state);
-            return;
-        }
-        
         // Update local state
         TownState.playerMoney = result.player.money;
         TownState.ultraBalls = result.player.ultra_balls;
@@ -3320,11 +2265,6 @@ async function refreshTownState() {
         TownState.players = result.players;
         TownState.shopPrices = result.shop_prices || TownState.shopPrices;
         GameState.currentRoute = result.room.current_route;
-        
-        // Store the server-provided town deadline for timer sync
-        if (result.room.town_deadline) {
-            GameState.townServerDeadline = result.room.town_deadline;
-        }
         
         // Render UI
         renderTownUI();
@@ -3345,10 +2285,7 @@ function renderTownUI() {
     const ultraCount = document.getElementById('town-ultra-count');
     
     if (moneyDisplay) moneyDisplay.textContent = `R$ ${TownState.playerMoney}`;
-    if (routeIndicator) {
-        const maxRoutes = (GameState.gameMode === 'ranked') ? 4 : 5;
-        routeIndicator.textContent = `Rota ${GameState.currentRoute}/${maxRoutes}`;
-    }
+    if (routeIndicator) routeIndicator.textContent = `Rota ${GameState.currentRoute}/8`;
     if (ultraCount) ultraCount.textContent = TownState.ultraBalls;
     
     // Update shop button states
@@ -3391,22 +2328,6 @@ function renderTownUI() {
             btnBuyMegaStone.innerHTML = `<span class="shop-item-icon">💎</span><span class="shop-item-name">Mega Stone</span><span class="shop-item-price">R$ ${TownState.shopPrices.mega_stone}</span>`;
             btnBuyMegaStone.title = 'Selecione um Pokémon com Mega Evolução como ativo';
         }
-    }
-    
-    // Update stat boost button states
-    const btnBuyHpBoost = document.getElementById('btn-buy-hp-boost');
-    const btnBuyAttackBoost = document.getElementById('btn-buy-attack-boost');
-    const btnBuySpeedBoost = document.getElementById('btn-buy-speed-boost');
-    const hasActivePokemon = TownState.team.some(p => p.slot === TownState.activeSlot);
-    
-    if (btnBuyHpBoost) {
-        btnBuyHpBoost.disabled = TownState.playerMoney < TownState.shopPrices.hp_boost || !hasActivePokemon;
-    }
-    if (btnBuyAttackBoost) {
-        btnBuyAttackBoost.disabled = TownState.playerMoney < TownState.shopPrices.attack_boost || !hasActivePokemon;
-    }
-    if (btnBuySpeedBoost) {
-        btnBuySpeedBoost.disabled = TownState.playerMoney < TownState.shopPrices.speed_boost || !hasActivePokemon;
     }
     
     // Render team grid
@@ -3497,22 +2418,7 @@ function renderTownTeamGrid() {
             sellBadge.textContent = `$${sellPrice}`;
             slot.appendChild(sellBadge);
             
-            // Show stat bonuses if any
-            const bonusHp = pokemon.bonus_hp || 0;
-            const bonusAtk = pokemon.bonus_attack || 0;
-            const bonusSpd = pokemon.bonus_speed || 0;
-            if (bonusHp > 0 || bonusAtk > 0 || bonusSpd > 0) {
-                const bonusBadge = document.createElement('span');
-                bonusBadge.className = 'pokemon-bonus-badge';
-                const bonusParts = [];
-                if (bonusHp > 0) bonusParts.push(`❤️+${bonusHp}`);
-                if (bonusAtk > 0) bonusParts.push(`⚔️+${bonusAtk}`);
-                if (bonusSpd > 0) bonusParts.push(`💨+${bonusSpd}`);
-                bonusBadge.textContent = bonusParts.join(' ');
-                slot.appendChild(bonusBadge);
-            }
-            
-            let tooltipText = `${pokemon.name}${isActive ? ' (Ativo)' : ''}${isMega ? ' (MEGA)' : ''}\nHP: ${pokemon.hp}${bonusHp > 0 ? `(+${bonusHp})` : ''} | ATQ: ${pokemon.attack}${bonusAtk > 0 ? `(+${bonusAtk})` : ''} | VEL: ${pokemon.speed}${bonusSpd > 0 ? `(+${bonusSpd})` : ''}`;
+            let tooltipText = `${pokemon.name}${isActive ? ' (Ativo)' : ''}${isMega ? ' (MEGA)' : ''}\nHP: ${pokemon.hp} | ATQ: ${pokemon.attack} | VEL: ${pokemon.speed}`;
             if (canEvolve) tooltipText += `\nEXP: ${expDisplay}/5`;
             if (canMegaEvolve) tooltipText += `\n💎 Pode Mega Evoluir → ${pokemon.mega_name}`;
             tooltipText += `\nVender por R$${sellPrice}`;
@@ -3762,46 +2668,6 @@ async function buyMegaStone() {
 }
 
 /**
- * Buy a stat boost (HP, Attack, or Speed) for the active Pokemon
- */
-async function buyStatBoost(statType) {
-    const priceKey = `${statType}_boost`;
-    const price = TownState.shopPrices[priceKey] || 2;
-    
-    if (TownState.playerMoney < price) {
-        showToast('Dinheiro insuficiente!', 'warning');
-        return;
-    }
-    
-    const activePokemon = TownState.team.find(p => p.slot === TownState.activeSlot);
-    if (!activePokemon) {
-        showToast('Nenhum Pokémon ativo!', 'warning');
-        return;
-    }
-    
-    try {
-        const result = await apiCall(`api/town.php?action=buy_${statType}_boost`, {
-            room_code: GameState.roomCode,
-            player_id: GameState.playerId
-        });
-        
-        if (result.success) {
-            TownState.playerMoney = result.new_money;
-            showToast(result.message, 'success');
-            
-            const statNames = { hp: 'HP', attack: 'Ataque', speed: 'Velocidade' };
-            addTownLogMessage(`${result.pokemon_name} ganhou +${result.bonus_value} ${statNames[statType]}!`, 'purchase');
-            await refreshTownState();
-        } else {
-            showToast(result.error || 'Falha na compra', 'error');
-        }
-    } catch (error) {
-        console.error(`Error buying ${statType} boost:`, error);
-        showToast('Erro ao comprar boost', 'error');
-    }
-}
-
-/**
  * Show Mega Evolution confirmation modal
  */
 function showMegaEvolutionConfirmation(pokemon) {
@@ -3995,13 +2861,7 @@ function handleTownEvent(eventType, data) {
     switch (eventType) {
         case 'town_purchase':
             if (data.player_id != GameState.playerId) {
-                let itemName;
-                if (data.item === 'ultra_ball') itemName = 'Ultra Ball';
-                else if (data.item === 'evo_soda') itemName = 'Evo Soda';
-                else if (data.item === 'hp_boost') itemName = `HP Up para ${data.pokemon_name}`;
-                else if (data.item === 'attack_boost') itemName = `Protein para ${data.pokemon_name}`;
-                else if (data.item === 'speed_boost') itemName = `Carbos para ${data.pokemon_name}`;
-                else itemName = data.item;
+                const itemName = data.item === 'ultra_ball' ? 'Ultra Ball' : 'Evo Soda';
                 addTownLogMessage(`${data.player_name} comprou ${itemName}`, 'info');
                 if (data.evolved) {
                     addTownLogMessage(`${data.pokemon_name} de ${data.player_name} evoluiu para ${data.evolved_to}!`, 'evolution');
@@ -4057,14 +2917,7 @@ const TournamentState = {
     hostPlayerId: null,
     isTiebreaker: false,
     tiebreakerType: '',
-    tiebreakerRound: 1,
-    // Ranked mode fields
-    gameMode: 'casual',
-    rankedCountdownTimer: null,
-    rankedCountdownSeconds: 10,
-    allBattlesStarted: false,
-    myMatchIndex: null,
-    _autoAdvanceScheduled: false
+    tiebreakerRound: 1
 };
 
 /**
@@ -4073,25 +2926,11 @@ const TournamentState = {
 async function initTournamentPhase() {
     console.log('Initializing Tournament Phase...');
     
-    // Stop any existing ranked countdown
-    stopRankedCountdown();
-    
-    // Reset auto-advance guard for this new tournament phase
-    TournamentState._autoAdvanceScheduled = false;
-    
     // Load tournament state from server
     await refreshTournamentState();
     
     // Setup tournament event listeners
     setupTournamentListeners();
-    
-    // In ranked mode, auto-start the countdown for battles
-    if (TournamentState.gameMode === 'ranked' && !TournamentState.allBattlesStarted) {
-        const allComplete = TournamentState.brackets.every(b => b.status === 'completed');
-        if (!allComplete) {
-            startRankedCountdown();
-        }
-    }
 }
 
 /**
@@ -4131,13 +2970,6 @@ async function refreshTournamentState() {
             return;
         }
         
-        // Check if game state has changed (e.g., tournament → catching for next route, or finished)
-        if (result.room.game_state && result.room.game_state !== 'tournament') {
-            console.log(`Tournament state polling detected phase change to: ${result.room.game_state}`);
-            handleGameStateChange(result.room.game_state);
-            return;
-        }
-        
         // Update local state
         TournamentState.brackets = result.tournament.brackets;
         TournamentState.byePlayer = result.tournament.bye_player;
@@ -4149,8 +2981,6 @@ async function refreshTournamentState() {
         TournamentState.isTiebreaker = result.tournament.is_tiebreaker || false;
         TournamentState.tiebreakerType = result.tournament.tiebreaker_type || '';
         TournamentState.tiebreakerRound = result.tournament.round || 1;
-        TournamentState.gameMode = result.room.game_mode || GameState.gameMode || 'casual';
-        TournamentState.allBattlesStarted = result.tournament.all_battles_started || false;
         GameState.currentRoute = result.room.current_route;
         
         // Check if this player is in the current match
@@ -4188,10 +3018,7 @@ function renderTournamentUI() {
                 : '⚔️ TIEBREAKER BATTLE!';
         }
     } else {
-        if (routeDisplay) {
-            const maxRoutes = TournamentState.gameMode === 'ranked' ? 4 : 5;
-            routeDisplay.textContent = `Rota ${GameState.currentRoute}/${maxRoutes}`;
-        }
+        if (routeDisplay) routeDisplay.textContent = `Rota ${GameState.currentRoute}/8`;
         if (tournamentHeader) tournamentHeader.textContent = '🏆 Torneio';
     }
     
@@ -4354,8 +3181,6 @@ function renderCurrentMatchPanel() {
     
     if (!matchPanel || !completePanel) return;
     
-    const isRanked = TournamentState.gameMode === 'ranked';
-    
     // Check if tournament is complete
     const allMatchesComplete = TournamentState.brackets.every(b => b.status === 'completed');
     
@@ -4363,8 +3188,7 @@ function renderCurrentMatchPanel() {
     console.log('Host check:', {
         playerId: GameState.playerId,
         hostPlayerId: TournamentState.hostPlayerId,
-        areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId),
-        isRanked: isRanked
+        areEqual: String(GameState.playerId) === String(TournamentState.hostPlayerId)
     });
     
     const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
@@ -4373,52 +3197,26 @@ function renderCurrentMatchPanel() {
         matchPanel.classList.add('hidden');
         completePanel.classList.remove('hidden');
         
-        if (isRanked) {
-            // In ranked mode, auto-advance after a short delay
-            // Guard: only schedule one auto-advance timer
-            const btnNextRoute = document.getElementById('btn-next-route');
-            const waitingMsg = document.getElementById('tournament-complete-waiting');
-            if (btnNextRoute) btnNextRoute.classList.add('hidden');
-            if (waitingMsg) {
-                waitingMsg.classList.remove('hidden');
-                waitingMsg.textContent = 'Avançando automaticamente...';
-            }
-            if (!TournamentState._autoAdvanceScheduled) {
-                TournamentState._autoAdvanceScheduled = true;
-                // Auto-advance after 3 seconds
-                setTimeout(() => {
-                    TournamentState._autoAdvanceScheduled = false;
-                    rankedCompleteTournament();
-                }, 3000);
-            }
-        } else {
-            // Casual mode: only host can advance
-            const btnNextRoute = document.getElementById('btn-next-route');
-            const waitingMsg = document.getElementById('tournament-complete-waiting');
-            
-            if (btnNextRoute) {
-                if (isHost) {
-                    btnNextRoute.classList.remove('hidden');
-                } else {
-                    btnNextRoute.classList.add('hidden');
-                }
-            }
-            
-            if (waitingMsg) {
-                if (isHost) {
-                    waitingMsg.classList.add('hidden');
-                } else {
-                    waitingMsg.classList.remove('hidden');
-                }
+        // Only host can advance to next route
+        const btnNextRoute = document.getElementById('btn-next-route');
+        const waitingMsg = document.getElementById('tournament-complete-waiting');
+        
+        if (btnNextRoute) {
+            if (isHost) {
+                btnNextRoute.classList.remove('hidden');
+            } else {
+                btnNextRoute.classList.add('hidden');
             }
         }
-        return;
-    }
-    
-    // In ranked mode, hide the current match panel (countdown handles everything)
-    if (isRanked) {
-        matchPanel.classList.add('hidden');
-        completePanel.classList.add('hidden');
+        
+        // Show/hide waiting message for non-hosts
+        if (waitingMsg) {
+            if (isHost) {
+                waitingMsg.classList.add('hidden');
+            } else {
+                waitingMsg.classList.remove('hidden');
+            }
+        }
         return;
     }
     
@@ -4460,7 +3258,7 @@ function renderCurrentMatchPanel() {
         <div class="match-player-badges">🎖️ ${player2.badges}</div>
     `;
     
-    // Show start button ONLY for host (casual mode only)
+    // Show start button ONLY for host
     if (btnStartBattle && matchWaiting) {
         if (isHost) {
             btnStartBattle.classList.remove('hidden');
@@ -4635,7 +3433,7 @@ function handleTournamentEvent(eventType, data) {
         case 'game_finished':
             let winMessage = `🏆 ${data.winner_name} venceu o jogo!`;
             if (data.win_type === 'badges') {
-                winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || (GameState.gameMode === 'ranked' ? 4 : 5)} insígnias!`;
+                winMessage = `🏆 ${data.winner_name} venceu com ${data.badges || 5} insígnias!`;
             } else if (data.win_type === 'most_badges') {
                 winMessage = `🏆 ${data.winner_name} venceu com mais insígnias!`;
             } else if (data.win_type === 'tiebreaker') {
@@ -4644,376 +3442,6 @@ function handleTournamentEvent(eventType, data) {
             showToast(winMessage, 'success');
             handleGameStateChange('finished');
             break;
-        
-        // Ranked mode events
-        case 'all_battles_started':
-            console.log('[Ranked] All battles started simultaneously');
-            stopRankedCountdown();
-            showToast('⚔️ Todas as batalhas começaram!', 'info');
-            handleGameStateChange('battle');
-            break;
-        
-        case 'ranked_all_battles_complete':
-            console.log('[Ranked] All battles complete');
-            // Transition back to tournament to show results and auto-advance
-            handleGameStateChange('tournament');
-            refreshTournamentState();
-            break;
-    }
-}
-
-// ============================================
-// RANKED TOURNAMENT HELPER FUNCTIONS
-// ============================================
-
-/**
- * Start the 10-second countdown before all ranked battles begin
- */
-function startRankedCountdown() {
-    stopRankedCountdown();
-    
-    TournamentState.rankedCountdownSeconds = 10;
-    
-    const countdownEl = document.getElementById('ranked-tournament-countdown');
-    const countdownValue = document.getElementById('ranked-countdown-value');
-    if (!countdownEl || !countdownValue) return;
-    
-    countdownEl.classList.remove('hidden');
-    countdownValue.textContent = TournamentState.rankedCountdownSeconds;
-    
-    TournamentState.rankedCountdownTimer = setInterval(async () => {
-        TournamentState.rankedCountdownSeconds--;
-        countdownValue.textContent = Math.max(0, TournamentState.rankedCountdownSeconds);
-        
-        if (TournamentState.rankedCountdownSeconds <= 0) {
-            stopRankedCountdown();
-            console.log('[Ranked] Countdown finished — starting all battles');
-            // Only one player needs to trigger the start (use host as tie-breaker)
-            const isHost = String(GameState.playerId) === String(TournamentState.hostPlayerId);
-            if (isHost) {
-                await startAllRankedBattles();
-            }
-        }
-    }, 1000);
-}
-
-/**
- * Stop the ranked countdown timer
- */
-function stopRankedCountdown() {
-    if (TournamentState.rankedCountdownTimer) {
-        clearInterval(TournamentState.rankedCountdownTimer);
-        TournamentState.rankedCountdownTimer = null;
-    }
-    const countdownEl = document.getElementById('ranked-tournament-countdown');
-    if (countdownEl) countdownEl.classList.add('hidden');
-}
-
-/**
- * Start all ranked battles simultaneously (called by host after countdown)
- */
-async function startAllRankedBattles() {
-    try {
-        const result = await apiCall('api/tournament.php', {
-            action: 'start_all_matches',
-            room_code: GameState.roomCode,
-            player_id: GameState.playerId
-        });
-        
-        if (result.success) {
-            if (result.already_started) {
-                console.log('[Ranked] Battles already started by another client');
-            } else {
-                console.log('[Ranked] All battles started successfully');
-            }
-        } else {
-            console.error('[Ranked] Failed to start all battles:', result.error);
-            showToast('Erro ao iniciar batalhas', 'error');
-        }
-    } catch (error) {
-        console.error('[Ranked] Error starting all battles:', error);
-    }
-}
-
-/**
- * Auto-complete tournament in ranked mode (any player can call)
- */
-async function rankedCompleteTournament() {
-    try {
-        const result = await apiCall('api/tournament.php', {
-            action: 'ranked_complete_tournament',
-            room_code: GameState.roomCode,
-            player_id: GameState.playerId
-        });
-        
-        if (result.success) {
-            if (result.already_advanced) {
-                // Another client already advanced — refresh state to detect phase change
-                console.log('[Ranked] Tournament already advanced, refreshing state...');
-                refreshTournamentState();
-            } else if (result.game_finished) {
-                showToast(`🏆 ${result.winner.name} venceu o jogo!`, 'success');
-            } else if (result.tiebreaker) {
-                showToast('🔥 DESEMPATE!', 'warning');
-            } else {
-                showToast(`Avançando para a Rota ${result.new_route}!`, 'success');
-            }
-        }
-    } catch (error) {
-        console.error('[Ranked] Error completing tournament:', error);
-    }
-}
-
-/**
- * Render the ranked bracket side panel during battle
- */
-function renderRankedBracketPanel(bracketSummary) {
-    const panel = document.getElementById('ranked-bracket-panel');
-    const list = document.getElementById('ranked-bracket-list');
-    if (!panel || !list) return;
-    
-    panel.classList.remove('hidden');
-    
-    // Add class to battle container for layout adjustment
-    const battleContainer = document.querySelector('.battle-container');
-    if (battleContainer) battleContainer.classList.add('has-ranked-panel');
-    
-    list.innerHTML = '';
-    
-    bracketSummary.forEach(bracket => {
-        const entry = document.createElement('div');
-        entry.className = 'ranked-bracket-entry';
-        
-        const isMyMatch = (bracket.player1?.id == GameState.playerId || bracket.player2?.id == GameState.playerId);
-        if (isMyMatch) entry.classList.add('is-my-match');
-        if (bracket.status === 'completed') entry.classList.add('completed');
-        
-        const p1Name = bracket.player1?.name || '???';
-        const p2Name = bracket.player2?.name || '???';
-        const p1Class = bracket.winner_id ? (bracket.winner_id == bracket.player1?.id ? 'winner' : 'loser') : '';
-        const p2Class = bracket.winner_id ? (bracket.winner_id == bracket.player2?.id ? 'winner' : 'loser') : '';
-        
-        let statusHtml = '';
-        if (bracket.status === 'completed') {
-            statusHtml = '<span class="bracket-entry-status completed">✅ Concluída</span>';
-        } else if (bracket.status === 'in_progress') {
-            statusHtml = '<span class="bracket-entry-status in-progress">⚔️ Em andamento</span>';
-        } else {
-            statusHtml = '<span class="bracket-entry-status">⏳ Pendente</span>';
-        }
-        
-        entry.innerHTML = `
-            <div class="bracket-entry-players">
-                <div class="bracket-entry-player ${p1Class}">${isMyMatch && bracket.player1?.id == GameState.playerId ? '👉 ' : ''}${p1Name}</div>
-                <div class="bracket-entry-vs">vs</div>
-                <div class="bracket-entry-player ${p2Class}">${isMyMatch && bracket.player2?.id == GameState.playerId ? '👉 ' : ''}${p2Name}</div>
-            </div>
-            ${statusHtml}
-        `;
-        
-        list.appendChild(entry);
-    });
-}
-
-/**
- * Hide the ranked bracket side panel
- */
-function hideRankedBracketPanel() {
-    const panel = document.getElementById('ranked-bracket-panel');
-    if (panel) panel.classList.add('hidden');
-    const battleContainer = document.querySelector('.battle-container');
-    if (battleContainer) battleContainer.classList.remove('has-ranked-panel');
-}
-
-/**
- * Show the ranked waiting overlay (when your battle is done but others aren't)
- */
-function showRankedWaitingOverlay(bracketSummary) {
-    const overlay = document.getElementById('ranked-waiting-overlay');
-    const bracketsContainer = document.getElementById('ranked-waiting-brackets');
-    if (!overlay || !bracketsContainer) return;
-    
-    overlay.classList.remove('hidden');
-    BattleState.rankedWaiting = true;
-    
-    // Render bracket status in the waiting overlay
-    bracketsContainer.innerHTML = '';
-    bracketSummary.forEach(bracket => {
-        const entry = document.createElement('div');
-        entry.className = 'ranked-bracket-entry';
-        if (bracket.status === 'completed') entry.classList.add('completed');
-        
-        const p1Name = bracket.player1?.name || '???';
-        const p2Name = bracket.player2?.name || '???';
-        const p1Class = bracket.winner_id ? (bracket.winner_id == bracket.player1?.id ? 'winner' : 'loser') : '';
-        const p2Class = bracket.winner_id ? (bracket.winner_id == bracket.player2?.id ? 'winner' : 'loser') : '';
-        
-        let statusText = bracket.status === 'completed' ? '✅' : '⚔️';
-        
-        entry.innerHTML = `
-            <div class="bracket-entry-players">
-                <div class="bracket-entry-player ${p1Class}">${p1Name}</div>
-                <div class="bracket-entry-vs">vs</div>
-                <div class="bracket-entry-player ${p2Class}">${p2Name}</div>
-            </div>
-            <div class="bracket-entry-status ${bracket.status === 'completed' ? 'completed' : 'in-progress'}">${statusText}</div>
-        `;
-        
-        bracketsContainer.appendChild(entry);
-    });
-}
-
-/**
- * Hide the ranked waiting overlay
- */
-function hideRankedWaitingOverlay() {
-    const overlay = document.getElementById('ranked-waiting-overlay');
-    if (overlay) overlay.classList.add('hidden');
-    BattleState.rankedWaiting = false;
-    stopRankedBracketPolling();
-}
-
-/**
- * Handle ranked battle SSE/WS events.
- * In ranked mode, all battles run simultaneously — each client receives events for ALL matches.
- * This function filters by match_index so only events for THIS player's match update the battle UI.
- * Events for OTHER matches update the bracket side panel.
- */
-function handleRankedBattleEvent(eventType, data) {
-    console.log('[Ranked] Battle event:', eventType, 'match_index:', data.match_index, 'myMatch:', BattleState.myMatchIndex);
-    
-    const isMyMatch = (data.match_index === BattleState.myMatchIndex);
-    
-    // Always update bracket summary for side panel regardless of which match the event is for
-    updateRankedBracketFromEvent(eventType, data);
-    
-    // Only process battle UI updates for this player's match
-    if (!isMyMatch) {
-        console.log('[Ranked] Event for different match, skipping battle UI update');
-        return;
-    }
-    
-    // Delegate to the existing battle event handlers
-    switch (eventType) {
-        case 'pokemon_selected':
-            handlePokemonSelected(data);
-            break;
-        case 'combat_started':
-            handleCombatStarted(data);
-            break;
-        case 'attack':
-            handleAttackEvent(data);
-            break;
-        case 'pokemon_fainted':
-            handlePokemonFainted(data);
-            break;
-        case 'pokemon_sent':
-            handlePokemonSent(data);
-            break;
-        case 'battle_ended':
-            handleBattleEnded(data);
-            break;
-        default:
-            console.log('[Ranked] Unknown ranked battle event:', eventType);
-    }
-}
-
-/**
- * Update the ranked bracket side panel from a live battle event.
- * This keeps the bracket panel updated in real-time as other battles progress.
- */
-function updateRankedBracketFromEvent(eventType, data) {
-    if (!BattleState.bracketSummary || !Array.isArray(BattleState.bracketSummary)) return;
-    
-    const matchIndex = data.match_index;
-    const bracket = BattleState.bracketSummary.find(b => b.match_index === matchIndex);
-    if (!bracket) return;
-    
-    switch (eventType) {
-        case 'combat_started':
-            bracket.status = 'in_progress';
-            break;
-        case 'battle_ended':
-            bracket.status = 'completed';
-            bracket.winner_id = data.winner_id;
-            break;
-    }
-    
-    // Re-render the bracket panel
-    renderRankedBracketPanel(BattleState.bracketSummary);
-    
-    // If we're in waiting state, update that overlay too
-    if (BattleState.rankedWaiting) {
-        showRankedWaitingOverlay(BattleState.bracketSummary);
-        
-        // Check if all matches are now complete
-        const allComplete = BattleState.bracketSummary.every(b => b.status === 'completed');
-        if (allComplete) {
-            console.log('[Ranked] All battles complete (from live event)');
-            hideRankedWaitingOverlay();
-            hideRankedBracketPanel();
-            setTimeout(() => {
-                handleGameStateChange('tournament');
-                refreshTournamentState();
-            }, 2000);
-        }
-    }
-}
-
-/**
- * Start polling bracket status for ranked mode (when waiting for other battles)
- */
-function startRankedBracketPolling() {
-    stopRankedBracketPolling();
-    BattleState._rankedPollInterval = setInterval(() => {
-        refreshRankedBracketStatus();
-    }, 3000);
-}
-
-/**
- * Stop ranked bracket polling
- */
-function stopRankedBracketPolling() {
-    if (BattleState._rankedPollInterval) {
-        clearInterval(BattleState._rankedPollInterval);
-        BattleState._rankedPollInterval = null;
-    }
-}
-
-/**
- * Update the ranked bracket panel and waiting overlay with fresh data
- */
-async function refreshRankedBracketStatus() {
-    if (!BattleState.isRankedMode) return;
-    
-    try {
-        const result = await apiCall(
-            `api/tournament.php?action=get_my_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
-            {}, 'GET'
-        );
-        
-        if (result.success && result.bracket_summary) {
-            BattleState.bracketSummary = result.bracket_summary;
-            renderRankedBracketPanel(result.bracket_summary);
-            
-            // If we're waiting, update the waiting overlay too
-            if (BattleState.rankedWaiting) {
-                showRankedWaitingOverlay(result.bracket_summary);
-            }
-            
-            // Check if all matches are complete
-            if (result.all_matches_complete) {
-                hideRankedWaitingOverlay();
-                hideRankedBracketPanel();
-                // Transition back to tournament
-                setTimeout(() => {
-                    handleGameStateChange('tournament');
-                    refreshTournamentState();
-                }, 2000);
-            }
-        }
-    } catch (error) {
-        console.debug('[Ranked] Error refreshing bracket status:', error);
     }
 }
 
@@ -5038,9 +3466,6 @@ async function initBattlePhase() {
         BattleState.autoTurnTimer = null;
     }
     
-    // Hide any ranked overlays from previous battles
-    hideRankedWaitingOverlay();
-    
     // Reset battle log display
     if (DOM.battleLogMessages) {
         DOM.battleLogMessages.innerHTML = '';
@@ -5048,31 +3473,15 @@ async function initBattlePhase() {
         console.error('DOM.battleLogMessages not found!');
     }
     
-    // Determine if this is ranked mode
-    const isRanked = GameState.gameMode === 'ranked' || TournamentState.gameMode === 'ranked';
-    BattleState.isRankedMode = isRanked;
-    
     // Fetch current battle state
     try {
-        console.log('Fetching battle state... (ranked:', isRanked, ')');
-        
-        // In ranked mode, use get_my_battle_state to get this player's specific battle
-        const apiAction = isRanked ? 'get_my_battle_state' : 'get_battle_state';
-        const result = await apiCall(
-            `${API.tournament}?action=${apiAction}&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`,
-            {}, 'GET'
-        );
+        console.log('Fetching battle state...');
+        const result = await apiCall(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
         
         console.log('Battle state result:', result);
         
         if (!result.success) {
             console.error('Battle state fetch failed:', result.error);
-            // In ranked mode, if no battle found, player might be waiting (bye)
-            if (isRanked && result.waiting) {
-                addBattleLog('Você não tem uma batalha nesta rodada. Aguardando...');
-                showRankedWaitingOverlay(BattleState.bracketSummary || []);
-                return;
-            }
             showToast(result.error || 'Falha ao carregar batalha', 'error');
             return;
         }
@@ -5082,17 +3491,6 @@ async function initBattlePhase() {
         // Store NPC battle info
         BattleState.isNpcBattle = result.is_npc_battle || battleState.is_npc_battle || false;
         BattleState.npcData = result.npc_data || battleState.npc_data || null;
-        
-        // In ranked mode, store the match index
-        if (isRanked) {
-            BattleState.myMatchIndex = result.match_index;
-            TournamentState.myMatchIndex = result.match_index;
-            BattleState.bracketSummary = result.bracket_summary || [];
-            // Show the bracket side panel
-            renderRankedBracketPanel(BattleState.bracketSummary);
-        } else {
-            hideRankedBracketPanel();
-        }
         
         // Determine if we are a participant (player1 is always human in NPC battles)
         BattleState.isMyBattle = (GameState.playerId == battleState.player1_id || 
@@ -5127,7 +3525,7 @@ async function initBattlePhase() {
                 : BattleState.player2HasSelected;
             
             if (!myHasSelected) {
-                showPokemonSelectionPanel(false, battleState.selection_deadline || null);
+                showPokemonSelectionPanel();
             } else {
                 showWaitingForOpponent();
             }
@@ -5477,10 +3875,8 @@ function updateBattleStatus() {
 
 /**
  * Show Pokemon selection panel
- * @param {boolean} isReplacement - Whether this is a replacement selection after a faint
- * @param {number|null} serverDeadline - Unix timestamp from server for timer sync (optional)
  */
-function showPokemonSelectionPanel(isReplacement = false, serverDeadline = null) {
+function showPokemonSelectionPanel(isReplacement = false) {
     console.log('showPokemonSelectionPanel called', {
         isReplacement,
         hasPanel: !!DOM.battleSelectionPanel,
@@ -5564,16 +3960,12 @@ function showPokemonSelectionPanel(isReplacement = false, serverDeadline = null)
         
         DOM.battleSelectionGrid.appendChild(card);
     });
-    
-    // Start the 10-second countdown timer (sync with server deadline if available)
-    startSelectionTimer(isReplacement, serverDeadline);
 }
 
 /**
  * Hide Pokemon selection panel
  */
 function hidePokemonSelectionPanel() {
-    stopSelectionTimer();
     if (DOM.battleSelectionPanel) {
         DOM.battleSelectionPanel.classList.add('hidden');
     }
@@ -5583,7 +3975,6 @@ function hidePokemonSelectionPanel() {
  * Show waiting for opponent state
  */
 function showWaitingForOpponent() {
-    stopSelectionTimer();
     if (!DOM.battleSelectionPanel) return;
     
     DOM.battleSelectionPanel.classList.remove('hidden');
@@ -5593,147 +3984,19 @@ function showWaitingForOpponent() {
 }
 
 /**
- * Start the 10-second selection countdown timer (deadline-based).
- * Uses an absolute deadline so the timer stays accurate even when the
- * browser throttles setInterval (e.g. when the tab is in the background).
- * @param {boolean} isReplacement - Whether this is a replacement selection
- * @param {number|null} serverDeadline - Unix timestamp (seconds) from server to sync with (optional)
- */
-function startSelectionTimer(isReplacement = false, serverDeadline = null) {
-    stopSelectionTimer();
-
-    // Calculate absolute deadline in milliseconds
-    if (serverDeadline) {
-        BattleState.selectionDeadline = serverDeadline * 1000; // server sends seconds
-    } else {
-        BattleState.selectionDeadline = Date.now() + 10000; // 10 s from now
-    }
-    BattleState.selectionIsReplacement = isReplacement;
-
-    // Immediately render the first frame
-    tickSelectionTimer();
-
-    // Tick every 250 ms for a responsive display; the deadline math keeps it accurate
-    BattleState.selectionTimerInterval = setInterval(() => {
-        tickSelectionTimer();
-    }, 250);
-}
-
-/**
- * Single tick of the selection timer – computes remaining time from deadline.
- */
-function tickSelectionTimer() {
-    if (!BattleState.selectionDeadline) return;
-
-    const remaining = Math.max(0, BattleState.selectionDeadline - Date.now());
-    const secondsLeft = Math.ceil(remaining / 1000); // whole seconds shown to player
-
-    updateTimerDisplay(secondsLeft);
-
-    if (remaining <= 0) {
-        stopSelectionTimer();
-        autoSelectPokemon(BattleState.selectionIsReplacement);
-    }
-}
-
-/**
- * Stop the selection countdown timer
- */
-function stopSelectionTimer() {
-    if (BattleState.selectionTimerInterval) {
-        clearInterval(BattleState.selectionTimerInterval);
-        BattleState.selectionTimerInterval = null;
-    }
-    BattleState.selectionDeadline = null;
-}
-
-/**
- * Update the visual timer display (circle + text)
- * @param {number} timeLeft - seconds remaining (0–10)
- */
-function updateTimerDisplay(timeLeft) {
-    if (!DOM.timerProgress || !DOM.timerText) return;
-    
-    const totalTime = 10;
-    const clamped = Math.max(0, Math.min(totalTime, timeLeft));
-    const circumference = 2 * Math.PI * 16; // r=16 from SVG
-    const offset = circumference * (1 - clamped / totalTime);
-    
-    DOM.timerProgress.style.strokeDashoffset = offset;
-    DOM.timerText.textContent = clamped;
-    
-    // Remove old classes
-    DOM.timerProgress.classList.remove('timer-warning', 'timer-danger');
-    DOM.timerText.classList.remove('timer-warning', 'timer-danger');
-    
-    // Apply warning/danger colors
-    if (timeLeft <= 3) {
-        DOM.timerProgress.classList.add('timer-danger');
-        DOM.timerText.classList.add('timer-danger');
-    } else if (timeLeft <= 5) {
-        DOM.timerProgress.classList.add('timer-warning');
-        DOM.timerText.classList.add('timer-warning');
-    }
-}
-
-/**
- * Auto-select a random non-fainted Pokemon when timer expires
- */
-function autoSelectPokemon(isReplacement) {
-    const myTeam = BattleState.amPlayer1 ? BattleState.player1Team : BattleState.player2Team;
-    
-    // Find all non-fainted Pokemon
-    const available = [];
-    myTeam.forEach((pokemon, index) => {
-        if (!pokemon.is_fainted) {
-            available.push(index);
-        }
-    });
-    
-    if (available.length === 0) return;
-    
-    // Pick a random one
-    const randomIndex = available[Math.floor(Math.random() * available.length)];
-    
-    addBattleLog('⏰ Tempo esgotado! Pokémon selecionado automaticamente.', 'info');
-    showToast('⏰ Tempo esgotado! Seleção automática.', 'warning');
-    
-    // Call the selection function
-    selectBattlePokemon(randomIndex, isReplacement);
-}
-
-/**
  * Select a Pokemon for battle
  */
 async function selectBattlePokemon(teamIndex, isReplacement = false) {
-    stopSelectionTimer();
     setLoading(true);
     
     try {
-        let action, data;
-        
-        if (BattleState.isRankedMode) {
-            // Ranked mode: use ranked-specific API with match_index
-            action = isReplacement ? 'ranked_select_replacement' : 'ranked_select_pokemon';
-            data = {
-                action: action,
-                room_code: GameState.roomCode,
-                player_id: GameState.playerId,
-                team_index: teamIndex,
-                match_index: BattleState.myMatchIndex
-            };
-        } else {
-            // Casual mode: use standard API
-            action = isReplacement ? 'select_replacement' : 'select_pokemon';
-            data = {
-                action: action,
-                room_code: GameState.roomCode,
-                player_id: GameState.playerId,
-                team_index: teamIndex
-            };
-        }
-        
-        const result = await apiCall(API.tournament, data);
+        const action = isReplacement ? 'select_replacement' : 'select_pokemon';
+        const result = await apiCall(API.tournament, {
+            action: action,
+            room_code: GameState.roomCode,
+            player_id: GameState.playerId,
+            team_index: teamIndex
+        });
         
         if (result.success) {
             showToast(result.message, 'success');
@@ -5801,24 +4064,10 @@ async function executeTurn() {
     if (BattleState.phase !== 'battle') return;
     
     try {
-        let data;
-        
-        if (BattleState.isRankedMode) {
-            // Ranked mode: execute turn for specific match
-            data = {
-                action: 'execute_ranked_turn',
-                room_code: GameState.roomCode,
-                match_index: BattleState.myMatchIndex
-            };
-        } else {
-            // Casual mode: standard turn execution
-            data = {
-                action: 'execute_turn',
-                room_code: GameState.roomCode
-            };
-        }
-        
-        const result = await apiCall(API.tournament, data);
+        const result = await apiCall(API.tournament, {
+            action: 'execute_turn',
+            room_code: GameState.roomCode
+        });
         
         if (result.success) {
             // The SSE events will handle UI updates
@@ -6180,9 +4429,7 @@ async function handlePokemonFainted(data) {
     if (data.player_id == GameState.playerId && data.needs_selection) {
         // Fetch fresh battle state to get type matchups for the replacement selection
         try {
-            // Use ranked or casual API depending on mode
-            const apiAction = BattleState.isRankedMode ? 'get_my_battle_state' : 'get_battle_state';
-            const result = await apiCall(`${API.tournament}?action=${apiAction}&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
+            const result = await apiCall(`${API.tournament}?action=get_battle_state&room_code=${GameState.roomCode}&player_id=${GameState.playerId}`, {}, 'GET');
             if (result.success) {
                 BattleState.typeMatchups = result.type_matchups || null;
                 // Also update team HP values
@@ -6193,9 +4440,7 @@ async function handlePokemonFainted(data) {
             console.error('Error fetching battle state for matchups:', error);
         }
         
-        // Use server deadline from the fainted event or from fetched battle state
-        const deadline = data.selection_deadline || null;
-        showPokemonSelectionPanel(true, deadline);
+        showPokemonSelectionPanel(true);
         updateBattleStatus();
     }
     
@@ -6284,44 +4529,11 @@ function handleBattleEnded(data) {
     
     updateBattleStatus();
     
-    // In ranked mode, show waiting overlay if other battles are still going
-    if (BattleState.isRankedMode) {
-        // Update bracket summary with this match's result
-        if (BattleState.bracketSummary) {
-            const myMatch = BattleState.bracketSummary.find(b => b.match_index === BattleState.myMatchIndex);
-            if (myMatch) {
-                myMatch.status = 'completed';
-                myMatch.winner_id = data.winner_id;
-            }
-            renderRankedBracketPanel(BattleState.bracketSummary);
-        }
-        
-        // Check if all matches are done
-        const allComplete = BattleState.bracketSummary?.every(b => b.status === 'completed');
-        
-        if (allComplete) {
-            // All done — go back to tournament
-            setTimeout(() => {
-                hideRankedBracketPanel();
-                hideRankedWaitingOverlay();
-                handleGameStateChange('tournament');
-                refreshTournamentState();
-            }, 3500);
-        } else {
-            // Show waiting overlay and start polling for updates
-            setTimeout(() => {
-                showRankedWaitingOverlay(BattleState.bracketSummary || []);
-                // Start polling for bracket updates
-                startRankedBracketPolling();
-            }, 2000);
-        }
-    } else {
-        // Casual mode: after a delay, return to tournament screen
-        setTimeout(() => {
-            handleGameStateChange('tournament');
-            refreshTournamentState();
-        }, 3500);
-    }
+    // After a delay, return to tournament screen
+    setTimeout(() => {
+        handleGameStateChange('tournament');
+        refreshTournamentState();
+    }, 3500);
 }
 
 /**
@@ -6398,14 +4610,8 @@ async function loadVictoryScreen() {
 
 /**
  * Check for existing session on page load
- * This is a fallback for when restoreBackendSession hasn't reconnected yet
- * (e.g., if the account was restored but no active game was found via restore,
- *  but the PHP session still has room data)
  */
 async function checkExistingSession() {
-    // If we already reconnected via restoreBackendSession, skip
-    if (GameState.roomCode) return;
-    
     try {
         // Try to get room state if we have session data
         const result = await apiCall(`${API.room}?action=get_room`, {}, 'GET');
@@ -6418,7 +4624,7 @@ async function checkExistingSession() {
             const currentPlayer = result.players.find(p => p.id == result.current_player_id);
             if (currentPlayer) {
                 GameState.playerId = currentPlayer.id;
-                GameState.playerNumber = parseInt(currentPlayer.player_number);
+                GameState.playerNumber = currentPlayer.player_number;
                 GameState.isHost = currentPlayer.is_host;
                 GameState.players = result.players;
                 
