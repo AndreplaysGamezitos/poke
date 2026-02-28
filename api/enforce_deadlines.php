@@ -645,8 +645,8 @@ function enforceRankedGenerateBrackets($db, $roomId) {
         // (generateBrackets writes to game_data internally, but we call it here)
         $tournamentData = generateBrackets($db, $roomId, $players, $currentRoute);
         
-        // Set a start_deadline so auto-start fires after 12 seconds
-        $tournamentData['start_deadline'] = time() + 12;
+        // Set a start_deadline so auto-start fires after 5 seconds
+        $tournamentData['start_deadline'] = time() + 5;
         $stmt = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
         $stmt->execute([json_encode($tournamentData), $roomId]);
         
@@ -694,7 +694,7 @@ function enforceRankedAutoStartBattles($db, $roomId, $room, $gd) {
                 return false;
             }
             
-            $lockedGd['start_deadline'] = time() + 12;
+            $lockedGd['start_deadline'] = time() + 5;
             $stmt = $db->prepare("UPDATE rooms SET game_data = ? WHERE id = ?");
             $stmt->execute([json_encode($lockedGd), $roomId]);
             $db->commit();
